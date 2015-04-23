@@ -1,0 +1,1400 @@
+// Copyright 2011-2012 Google Inc.
+// Copyright 2011 Shannon Weyrick <weyrick@mozek.us>
+// Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+# annotation that generates bindings.
+# This currently duplicates the parser logic - rewrite this once the
+# annotation interface supports introspection of compile contexts.
+
+import crack.lang die, free, AppendBuffer, Exception, Formatter;
+import crack.strutil ljust;
+import crack.io cout, FStr, StandardFormatter, StringFormatter, Writer;
+import crack.compiler CrackContext, Token;
+import crack.exp.file File;
+import crack.regex Regex, Match;
+import crack.cont.array Array;
+import crack.strutil StringArray;
+import crack.cont.treemap TreeMap;
+
+@import crack.ann define;
+
+// Constants to make later code more readable
+OPENBRACE:=true;
+CLOSEBRACE:=false;
+
+class Func;
+
+@abstract class Type {
+    String name, cname;
+    String __emitName;
+    bool initialized;
+
+    oper init(String name, String cname) : 
+        name = name, 
+        cname = cname,
+        __emitName = 'type_' + name {
+    }
+
+    oper init(String name, String cname, String emitted) :
+        name = name,
+        cname = cname,
+        __emitName = emitted {
+    }
+
+    String emit() {
+        return __emitName;
+    }
+
+    bool isBuiltIn() {
+        return false;
+    }
+
+    bool isIfdef() {
+        return false;
+    }
+
+    bool isOpen(){
+       return false;
+    }
+
+    @abstract void emitInitializer(Formatter out);
+
+    String getConstCast() { return null; }
+}
+
+// to be inserted in the typemap
+class IfdefType : Type {
+   bool _open;
+   String _test;
+
+    oper init(bool open, String test, String name) :
+        _open = open,
+        _test = test,
+        Type(name, name) {
+    }
+
+    oper init(bool open, String test, String name, String emitted) :
+        _open = open,
+        _test = test,
+        Type(name, name, emitted) {
+    }
+
+    bool isIfdef() {
+        return true;
+    }
+
+    bool isOpen(){
+       return _open;
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized) return;
+        if (_open)
+           out `\n#$(_test) $name\n\n`;
+        else
+           out `#$(_test) // $(name.slice(0, -4))\n\n`;
+        initialized = true;
+    }
+}
+
+class IfdefPreamble : Type {
+
+    oper init(String name, String emitted) : Type(name, cname, emitted) {}
+
+    void emitInitializer(Formatter out) {
+        if (initialized) return;
+        out.write(emit());
+        initialized = true;
+    }
+
+}
+
+
+class Arg {
+    String name;
+    Type type;
+
+    oper init(Type type, String name) : type = type, name = name {}
+}
+
+class Func {
+    Type retType;
+    String name;
+    String cname;
+    Array[Arg] args;
+    bool initialized;
+    bool isOper;
+
+    oper init(Type retType, String name, String cname) :
+        retType = retType,
+        name = name,
+        cname = cname,
+        initialized = false,
+        isOper = false,
+        args() { }
+
+    oper init(Type retType, String name, String cname, bool isOper) :
+        retType = retType,
+        name = name,
+        cname = cname,
+        initialized = false,
+        isOper = isOper,
+        args() { }
+
+
+    void addArg(Arg arg) {
+        args.append(arg);
+    }
+
+    bool isIfdef() {
+        return retType.isIfdef();
+    }
+
+    bool isOpen(){
+       return retType.isOpen();
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized) return;
+
+        out `    f = mod->addFunc($(retType.emit()), "$(name)",
+                     (void *)$(cname)
+                     );
+`;
+        for (arg :in args)
+            out `       f->addArg($(arg.type.emit()), "$(arg.name)");\n`;
+        out `\n`;
+    }
+}
+
+class IfdefFunc: Func{
+   oper init(bool open, String test, String name):
+      Func(IfdefType(open, test, name), name, name) {
+   }
+
+   void emitInitializer(Formatter out){
+      retType.emitInitializer(out);
+   }
+}
+
+class BuiltInType : Type {
+    String funcName;
+    oper init(String name, String funcName) :
+        Type(name, name),
+        funcName = funcName {
+    }
+
+    bool isBuiltIn() {
+        return true;
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized)
+            return;
+        out `    crack::ext::Type *$(emit()) = mod->get$(funcName)Type();\n`;
+        initialized = true;
+    }
+}
+
+class ExternalType : Type {
+
+    oper init(String name) :
+        Type(name, name) {
+    }
+
+    bool isBuiltIn() {
+        return false;
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized)
+            return;
+        out `    crack::ext::Type *$(emit()) = mod->getType("$name");\n`;
+        initialized = true;
+    }
+}
+
+
+class ConstType : BuiltInType {
+    String constCast;
+
+    oper init(String name, String funcName, String constCast) :
+        BuiltInType(name, funcName),
+        constCast = constCast {
+    }
+
+    String getConstCast() { return constCast; }
+}
+
+class TypeImpl : Type {
+    String emitted;
+    Array[Func] methods;
+    Array[Arg] members;
+    uint numDecls;
+    uint numEmitted;
+
+    oper init(String name, String cname) : 
+        Type(name, cname), 
+        members(), methods(),
+        numDecls(1), numEmitted(0) {
+    }
+
+    oper init(String name, String cname, uint numDecls) : 
+        Type(name, cname), 
+        members(), methods(),
+        numDecls(numDecls), numEmitted(0) {
+    }
+
+    oper init(String name, String cname, String emitted) :
+        Type(name, cname, emitted),
+        members(), methods(),
+        numDecls(1), numEmitted(0) {
+    }
+
+    // class members
+    void addMember(Arg member) {
+       members.append(member);
+    }
+
+   // class methods, emit not implemented
+    void addMethod(Func method) {
+        methods.append(method);
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized)
+            return;
+
+        typeVar := emit();
+
+        // make sure all our member types are defined
+        if (numEmitted == 0)
+            for (member :in members)
+                if (member.type.isBuiltIn())
+                  member.type.emitInitializer(out);
+
+        // emit initializer
+        if (numDecls == 1 || numEmitted == 1){
+            if (numEmitted == 0) 
+                out `\n    crack::ext::Type *$typeVar = mod->addType("$name", sizeof($cname));\n`;
+            else {
+                comment := FStr() `\n    // Definition of forward type $name `;
+                out `$(ljust(comment, 80, b'-'))\n`;
+            }
+        }
+        else
+            out `\n    crack::ext::Type *$typeVar = mod->addForwardType("$name", sizeof($cname));\n`;
+        
+        if (numDecls == 1 || numEmitted ==1) {
+            // emit member variables
+            for (member :in members){
+               if (member.type.isBuiltIn())
+                  member.type.emitInitializer(out);
+               out `        $typeVar->addInstVar($(member.type.emit()), "$(member.name)",
+                                CRACK_OFFSET($(cname), $(member.name)));\n`;
+            }
+
+            // emit methods
+            for (method :in methods){
+                if (method.retType.isBuiltIn())
+                    method.retType.emitInitializer(out);
+
+                if (method.isOper) {
+                    if (method.name == "init")
+                        out `        f = $typeVar->addConstructor("init",
+                            (void *)$(method.cname)
+                        );\n`;
+                } else {
+                    out I`
+                        f = $typeVar->addMethod(
+                            $(method.retType.emit()), 
+                            "$(method.name)",
+                            (void *)$(method.cname)
+                        );
+                    `;
+                }
+                for (arg :in method.args)
+                    out I`    f->addArg($(arg.type.emit()), 
+                                       "$(arg.name)"
+                                       );
+                         `;
+                out `\n`;
+
+            }
+
+            // finish type definition
+            out `    $typeVar->finish();\n\n`;
+            initialized = true;
+        }
+        numEmitted++;
+    }
+}
+
+class SpecializedType : TypeImpl {
+
+    Type generic;
+    Array[Type] specializers = {};
+
+    @static String _mangle(String name) {
+        # allocate a generous buffer
+        AppendBuffer result = {name.size * 2};
+        for (uint i = 0; i < name.size; ++i) {
+            ch := name.buffer[i];
+            if (ch == b'_')  # '_'
+                result.extend('__');
+            else if (ch == b'[')
+                result.extend('_p');
+            else if (ch == b']')
+                result.extend('_q');
+            else if (ch == b',')
+                result.extend('_c');
+            else if (ch == b' ')
+                result.extend('_s');
+            else
+                result.append(ch);
+        }
+
+        return String(result, true);
+    }
+
+    # specialized types look like builtins - we don't do the normal type
+    # creation for them, instead we just get specializations for them.
+    oper init(String name, Type generic, Type specializer) :
+        TypeImpl(name, name, _mangle(name)),
+        generic = generic {
+        specializers.append(specializer);
+    }
+    
+    oper init(String name, Type generic, Array[Type] specializers) :
+        TypeImpl(name, name, _mangle(name)),
+        generic = generic,
+        specializers = specializers {
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized)
+            return;
+
+        # make sure that the types we depend on are initialized
+        generic.emitInitializer(out);
+        for (spec :in specializers)
+            spec.emitInitializer(out);
+
+        typeName := emit();
+        out `
+    crack::ext::Type *$typeName;
+    {
+        std::vector<crack::ext::Type *> params($(specializers.count()));
+`;
+        int i;
+        for (spec :in specializers)
+            out `\
+        params[$(i++)] = $(spec.emit());\n`;
+        out `\
+        $typeName = $(generic.emit())->getSpecialization(params);
+    }
+`;
+        initialized = true;
+    }
+}
+
+@abstract class GenericType : TypeImpl {
+    oper init(String name, String emitted) :
+        TypeImpl(name, name, emitted) {
+    }
+
+    Type getSpecialization(TreeMap[String, Type] types, StringArray typeNames,
+                           Array[Type] specializers
+                           ) {
+
+        # construct the specialization name
+        StringFormatter fmt = {};
+        fmt `$name[`;
+        bool first = true;
+        for (spec :in specializers)
+            if (first) {
+                first = false;
+                fmt `$(spec.name)`;
+            } else {
+                fmt `, $(spec.name)`;
+            }
+        fmt `]`;
+        newName := fmt.string();
+
+        # see if there's an existing type, create a new one if not.
+        type := types.get(newName);
+        if (!type) {
+            type = SpecializedType(newName, this, specializers);
+            types[newName] = type;
+            typeNames.append(newName);
+        }
+
+        return type;
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized) return;
+        out `
+    crack::ext::Type $(emit()) = mod->addType("$name");
+`;
+    }
+
+    @abstract int getParamCount();
+}
+
+class ArrayType : GenericType {
+
+    oper init() :
+        GenericType('array', 'array') {
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized) return;
+        out `
+    crack::ext::Type *$(emit()) = mod->getType("array");
+`;
+        initialized = true;
+    }
+    
+    int getParamCount() { return 1; }
+}
+
+class FunctionType : GenericType {
+
+    oper init() :
+        GenericType('function', 'function') {
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized) return;
+        out `
+    crack::ext::Type *$(emit()) = mod->getType("function");
+`;
+        initialized = true;
+    }
+    
+    int getParamCount() { return -1; }
+}
+
+class Const {
+    Type type;
+    String ident, val;
+    bool initialized;
+
+    oper init(Type type, String ident) :
+        type = type,
+        ident = ident,
+        initialized = false,
+        val = ident {
+    }
+
+    oper init(Type type, String ident, String val) :
+        type = type,
+        ident = ident,
+        val = val {
+    }
+
+    bool isIfdef() {
+        return type.isIfdef();
+    }
+
+    bool isOpen(){
+       return type.isOpen();
+    }
+
+    void emitInitializer(Formatter out) {
+        if (initialized) return;
+            cast := type.getConstCast();
+            out `
+    mod->addConstant($(type.emit()), "$(ident)",
+                     static_cast<$cast>($(val))
+                     );
+`;
+        }
+}
+
+class IfdefConst:Const{
+   oper init(bool open, String test, String ident):
+      Const(IfdefType(open, test, ident), ident){
+   }
+   void emitInitializer(Formatter out) {
+      type.emitInitializer(out);
+   }
+}
+
+class Errors : StringFormatter {
+
+    CrackContext ctx;
+    Token tok;
+
+    oper init(CrackContext ctx, Token tok) : ctx = ctx, tok = tok {}
+    oper init(CrackContext ctx) : ctx = ctx {}
+
+    oper del() {
+        # null terminate
+        this `\0`;
+        if (!(tok is null))
+            ctx.error(tok, string().buffer);
+        else
+            ctx.error(string().buffer);
+    }
+}
+
+@define setBuiltinType(val, func) {
+    name = val;
+    types[name] = BuiltInType(name, func);
+    typeNames.append(name);
+}
+
+@define setConstType(val, func, cast) {
+    name = val;
+    types[name] = ConstType(name, func, cast);
+    typeNames.append(name);
+}
+
+class constClassInfo {
+    String prefix;
+    String sep;
+    
+    oper init(String prefix0, String sep0): prefix=prefix0, sep=sep0 { }
+ }
+
+class boundClassInfo {
+    String classname, basemember, prefix, sep, basetype;
+    
+    oper init(String classname0, String basemember0, 
+             String prefix0, String sep0, String basetype0): 
+        classname=classname0, basemember=basemember0, 
+        prefix=prefix0, sep=sep0, basetype=basetype0 { }
+ }
+
+class ExtensionData {
+    String filename;
+    String symbolFilename;
+    TreeMap[String, Type] types;
+    Array[Func] funcs;
+    Array[Const] consts = {};
+    StringArray moduleName = {};  # module name
+    Array[Type] preamble = {};
+    StringArray ifdefs = {};
+    StringArray crackInject = {};
+    StringArray typeNames = {}; // Need this because the typemap is not ordered
+    Array[constClassInfo] constClasses = {};
+    Array[boundClassInfo] boundClasses = {};
+    TreeMap[String, boundClassInfo] boundMap = {};
+
+    bool inSrcDir;
+    uint ifdefLevel = 0;
+    String lastCName;
+
+    oper init() : types(), funcs() {
+        String name;
+        @setBuiltinType('Class', 'Class');
+        @setBuiltinType('void', 'Void');
+        @setBuiltinType('voidptr', 'Voidptr');
+        @setBuiltinType('bool', 'Bool');
+        @setBuiltinType('byteptr', 'Byteptr');
+        @setBuiltinType('byte', 'Byte');
+        @setConstType('int16', 'Int16', 'int16_t');
+        @setConstType('int32', 'Int32', 'int');
+        @setConstType('int64', 'Int64', 'int64_t');
+        @setConstType('uint16', 'Uint16', 'int16_t');
+        @setConstType('uint32', 'Uint32', 'int');
+        @setConstType('uint64', 'Uint64', 'uint64_t');
+        @setConstType('int', 'Int', 'int');
+        @setConstType('uint', 'Uint', 'int');
+        @setConstType('intz', 'Intz', 'intz');
+        @setConstType('uintz', 'Uintz', 'intz');
+        @setConstType('float32', 'Float32', 'double');
+        @setConstType('float64', 'Float64', 'double');
+        @setConstType('float', 'Float', 'double');
+
+        types['array'] = ArrayType();
+        types['function'] = FunctionType();
+    }
+
+    Errors error(CrackContext ctx, Token tok) { return Errors(ctx, tok); }
+    Errors error(CrackContext ctx) { return Errors(ctx); }
+
+    Type _parseType(CrackContext ctx) {
+        tok := ctx.getToken();
+
+        if (!tok.isIdent())
+            error(ctx, tok) `Type specifier expected`;
+        type := types.get(String(tok.getText()));
+        if (!type)
+            error(ctx, tok) `Unknown type $(tok.getText())`;
+
+        # check for a specializer type
+        tok = ctx.getToken();
+        if (tok.isLBracket()) {
+            Array[Type] specializers = {};
+            while (true) {
+                specializers.append(_parseType(ctx));
+                tok = ctx.getToken();
+                if (tok.isRBracket())
+                    break;
+                else if (!tok.isComma())
+                    error(ctx, tok) `Right bracket or comma expected`;
+            }
+
+            if (!type.isa(GenericType))
+                error(ctx, tok) `$(type.name) is not a generic type`;
+            
+            generic := GenericType.unsafeCast(type);
+            paramCount := generic.getParamCount();
+            if (paramCount == -1 && specializers.count() < 1)
+                error(ctx, tok) `$(type.name) must have at least one \
+parameter.`;
+            else if (paramCount >= 0 &&
+                     specializers.count() != generic.getParamCount()
+                     )
+                error(ctx, tok) `$(type.name) requires \
+$(generic.getParamCount()) parameters.`;
+                
+            type = generic.getSpecialization(types, typeNames, specializers);
+        } else {
+            ctx.putBack(tok);
+        }
+
+        return type;
+    }
+
+    String _parseString(CrackContext ctx) {
+        tok := ctx.getToken();
+        if (!tok.isString())
+            error(ctx, tok) `Expected string`;
+        return String(tok.getText());
+    }
+
+    void _populateIfdefs(bool open, String ifdefTest,  String ifdefCond){
+        funcs.append(IfdefFunc(open, ifdefTest, ifdefCond));
+        consts.append(IfdefConst(open, ifdefTest, ifdefCond));
+        types[ifdefCond]=IfdefType(open, ifdefTest, ifdefCond);
+        typeNames.append(ifdefCond);
+        preamble.append(IfdefType(open, ifdefTest, ifdefCond));
+    }
+
+    void _parseIfdef(String ifdefTest, CrackContext ctx){
+        tok := ctx.getToken();
+        if (!tok.isIdent())
+          error(ctx, tok) `Identifier expected`;
+
+        ifdefCond := String(tok.getText());
+        tok = ctx.getToken();
+        if (!tok.isLCurly())
+             error(ctx, tok) `Opening curly bracket expected`;
+
+        ifdefs.append(ifdefCond);
+        ifdefLevel++;
+        _populateIfdefs(OPENBRACE, ifdefTest,  ifdefCond);
+
+    }
+    
+    void _parseLParen(CrackContext ctx) {
+        tok := ctx.getToken();
+        if (!tok.isLParen())
+            error(ctx, tok) `Left paren expected, got $tok.`;
+    }
+
+    StringArray _parseArgList(CrackContext ctx){
+        StringArray args = {};
+        _parseLParen(ctx);
+        tok := ctx.getToken();
+        for (uint i = 0; !tok.isRParen(); i++) {
+            if (i>0) {
+                if (!tok.isComma())
+                    error(ctx, tok) `Expected a comma in argument list`;
+                tok = ctx.getToken();
+            }
+
+            if (!tok.isIdent())
+                    error(ctx, tok) `Expected identifier in argument list`;
+            args.append(String(tok.getText()));
+            tok = ctx.getToken();
+        }
+        return args;
+    }
+
+    void _parseAnnotation(CrackContext ctx) {
+        tok := ctx.getToken();
+        if (tok.isIdent()) {
+            String ann = {tok.getText()};
+            if (ann == 'filename') {
+                filename = _parseString(ctx);
+            } else if (ann == 'inject') {
+               StringFormatter po = {};
+               po `preamble_$(preamble.count())`;
+               ifdefCond := po.string();
+               preamble.append(IfdefPreamble(ifdefCond, _parseString(ctx)));
+            } else if (ann == 'crack') {
+               crackInject.append(_parseString(ctx));
+            } else if (ann == 'crack_internal') {
+                inSrcDir = true;
+            }
+            else if (ann == 'dumpsymbols') {
+                symbolFilename = _parseString(ctx);
+            }
+            else if (ann == 'constclass' && symbolFilename) {
+                args := _parseArgList(ctx);
+                if (args.count() != 2)
+                    error(ctx, tok) `constclass annotation takes 2 arguments`;
+                constClasses.append(constClassInfo(args[0], args[1]));
+            }
+            else if (ann == 'boundclass' && symbolFilename) {
+            /// For C libraries with consistent function names, produces
+            /// a Crack class definition of all functions with a specified
+            /// prefix and first argument
+            /// E.g. @boundclass(Cairo, cr, cairo, _, cairo_t)
+            /// The arguments are:
+            /// - Crack class name
+            /// - object's C name in the library
+            /// - prefix of the functions to put in the class
+            /// - separator after prefix
+            /// - type of the C object
+
+            /// For the function
+            ///     cairo_move_to(cairo_t cr, float64 x, float64 y)
+            /// example produces
+            /// class Cairo {
+            ///     cairo_t cr;
+            ///     move_to(float64 x, float64 y) {
+            ///         cairo_move_to(cr, x, y);
+            ///     }
+            /// }
+                args := _parseArgList(ctx);
+                if (args.count() != 5)
+                    error(ctx, tok) `boundclass annotation takes 5 arguments`;
+                bci := boundClassInfo(args[0], args[1], args[2], args[3], args[4]);
+                boundClasses.append(bci);
+                boundMap[bci.basetype] = bci;
+            }
+            else if (ann == 'ifdef' || ann == 'ifndef') {
+                _parseIfdef(ann, ctx);
+            }
+            else if (ann == 'cname') {
+            /// Specifies the C name of a function if different from the
+            /// Crack name
+                tok = ctx.getToken();
+                if (!tok.isIdent())
+                    error(ctx, tok) `Expected identifier in cname annotation`;
+                lastCName = String(tok.getText());
+            } else if (ann == 'extern') {
+                tok = ctx.getToken();
+                if (!tok.isIdent())
+                    error(ctx, tok) `Expected identifier in extern annotation`;
+
+                externName := String(tok.getText());
+                types[externName] = ExternalType(externName);
+                typeNames.append(externName);
+            } else {
+                error(ctx, tok) `Unexpected annotation: $ann`;
+            }
+        } else {
+            error(ctx, tok) `Identifier expected after at sign`;
+        }
+    }
+
+    ## Parse the argument list of a function and return the new function.
+    ## type func ( ... )
+    ##            ^     ^
+    Func _parseFuncTail(CrackContext ctx, Type retType, Token ident,
+                        bool isOper
+                        ) {
+        name := String(ident.getText());
+
+        f := Func(retType, name, lastCName ? lastCName : name, isOper);
+        lastCName = null;
+
+        tok := ctx.getToken();
+        while (!tok.isRParen()) {
+            # parse the argument type
+            ctx.putBack(tok);
+            argType := _parseType(ctx);
+
+            # get the arg variable
+            tok = ctx.getToken();
+            if (!tok.isIdent())
+                error(ctx, tok) `argument name expected`;
+
+            f.addArg(Arg(argType, String(tok.getText())));
+
+            tok = ctx.getToken();
+            if (tok.isComma())
+                tok = ctx.getToken();
+            else if (!tok.isRParen())
+                error(ctx, tok) `Comma or right paren expected`;
+        }
+
+        return f;
+    }
+
+    ## Parse an arbitrary definition and add it to the class.
+    ## type: enclosing class
+    void _parseDef(CrackContext ctx, TypeImpl type) {
+        
+        # Check for an "oper" def, which may not be preceeded by a return type.
+        tok := ctx.getToken();
+        if (tok.isOper()) {
+            # TODO: Fix this very incomplete implementation of 'oper' parsing.
+            ident := ctx.getToken();
+            if (!ident.isIdent())
+                error(ctx, ident) `Identifier expected after oper, got $ident`;
+            _parseLParen(ctx);
+            type.addMethod(_parseFuncTail(ctx, type, ident, true));
+            return;
+        } else {
+            ctx.putBack(tok);
+        }
+        
+        # return or object type.
+        retType := _parseType(ctx);
+        
+        ident := ctx.getToken();
+        if (!ident.isIdent())
+            error(ctx, ident) `Identifier expected in definition, got $ident`;
+        
+        tok = ctx.getToken();
+        if (tok.isLParen()) {
+            # it's a function.  parse the rest of it
+            type.addMethod(_parseFuncTail(ctx, retType, ident, false));
+        } else {
+            # it's a variable definition.
+            ctx.putBack(tok);
+            type.addMember(Arg(retType, String(ident.getText())));
+            tok = ctx.getToken();
+
+            while (tok.isComma()){
+                tok = ctx.getToken();
+                if (!tok.isIdent())
+                    error(ctx, tok) `argument name expected`;
+
+                type.addMember(Arg(retType, String(tok.getText())));
+                tok = ctx.getToken();
+                if (!tok.isSemi() && !tok.isComma())
+                    error(ctx, tok) `Semicolon or comma expected`;
+            }
+            
+            # put back the semicolon.
+            ctx.putBack(tok);
+        }
+    }
+
+    void _parseClassDef(CrackContext ctx) {
+        # get the type name.
+        tok := ctx.getToken();
+        TypeImpl classType;
+
+        if (!tok.isIdent())
+            error(ctx, tok) `Identifier expected after "class" keyword.`;
+
+        String className = {tok.getText()};
+
+        # get a semicolon or left curly
+        tok = ctx.getToken();
+        if (tok.isSemi() || tok.isLCurly()){
+            uint numDecl = 1;
+            if (types.get(className))
+               numDecl = 2;
+
+            classType = TypeImpl(className, lastCName ? lastCName : className, 
+                                 numDecl
+                                 );
+            types[className] = classType;
+            lastCName = null;
+        } else {
+            error(ctx, tok) `Semicolon or class definition expected after \
+class declaration`;
+            return;
+        }
+
+        if (tok.isLCurly()){
+            tok = ctx.getToken();
+            Type type;
+            while (!tok.isRCurly()) {
+                
+                // check for an annotation
+                if (tok.isAnn()) {
+                    _parseAnnotation(ctx);
+                    tok = ctx.getToken();
+                    continue;
+                } else {
+                    ctx.putBack(tok);
+                    _parseDef(ctx, classType);
+                    tok = ctx.getToken();
+                }
+
+               if (tok.isSemi())
+                    tok = ctx.getToken();
+               else if (!tok.isRCurly())
+                   error(ctx, tok) `Semicolon or right curly brace expected, got $(tok.getText())`;
+            }
+        }
+
+        typeNames.append(className);
+
+    }
+
+    void _closeIfdef(){
+        ifdefLevel--;
+        ifdefCondStart:=ifdefs.pop();
+
+        StringFormatter no = {}; // Object name = $(ifdefCondStart)_end
+        no `$(ifdefCondStart)_end`;
+        ifdefCond := no.string();
+
+        _populateIfdefs(CLOSEBRACE, "endif", ifdefCond);
+    }
+
+    StringArray _parseExtensionName(CrackContext ctx) {
+        StringArray result = {};
+        while (true) {
+            tok := ctx.getToken();
+            if (!tok.isIdent())
+                error(ctx, tok) `Expected extension name.`;
+
+            result.append(String(tok.getText()));
+            tok = ctx.getToken();
+
+            if (!tok.isDot()) {
+                ctx.putBack(tok);
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    void _parseConst(CrackContext ctx) {
+        Type type = _parseType(ctx);
+
+        if (!type.getConstCast())
+            error(ctx) `$(type.name) is not a valid constant type.`;
+
+        while (true) {
+            tok := ctx.getToken();
+            if (!tok.isIdent())
+                error(ctx, tok) `Identifier expected in constant definition`;
+
+            ident := String(tok.getText());
+
+            tok = ctx.getToken();
+            if (tok.isSemi()) {
+                consts.append(Const(type, ident));
+                break;
+            } else if (tok.isComma()) {
+                consts.append(Const(type, ident));
+                continue;
+            }
+
+            # expecting assigning to a value
+            if (!tok.isAssign())
+                error(ctx, tok) `Assignment operator, comma or semicolon \
+expected after constant name.`;
+
+            tok = ctx.getToken();
+            if (!(tok.isIdent() || tok.isString() || tok.isInteger() ||
+                  tok.isFloat()
+                  )
+                )
+                error(ctx, tok) `Constant value must be an identifier, number \
+or string.`;
+
+            consts.append(Const(type, ident, String(tok.getText())));
+
+            tok = ctx.getToken();
+            if (tok.isSemi())
+                break;
+            else if (!tok.isComma())
+                error(ctx, tok) `comma or semicolon expected after constant \
+definition.`;
+        }
+    }
+
+    void parse(CrackContext ctx) {
+
+        # get the extension module
+        moduleName = _parseExtensionName(ctx);
+
+        # expecting a '{'
+        tok := ctx.getToken();
+        if (!tok.isLCurly())
+            error(ctx, tok) `Opening curly bracket expected`;
+
+        # parse all definitions
+        while (true) {
+            tok = ctx.getToken();
+
+            # check for a class definition
+            if (tok.isClass())
+                _parseClassDef(ctx);
+            else if (tok.isConst()) {
+                _parseConst(ctx);
+            } else if (tok.isIdent()) {
+                # Looks like a function defintion.
+                ctx.putBack(tok);
+                retType := _parseType(ctx);
+                ident := ctx.getToken();
+                _parseLParen(ctx);
+                funcs.append(_parseFuncTail(ctx, retType, ident, false));
+            } else if (tok.isRCurly()){
+               if (ifdefLevel > 0) _closeIfdef();
+               else break;
+            }
+            else if (tok.isSemi())
+                ;
+            else if (tok.isAnn()){
+                _parseAnnotation(ctx);
+            }
+            else
+                error(ctx, tok)
+                    `expected class, function or right curly bracket.`;
+        }
+
+    }
+
+    String header(String name) {
+        StringFormatter fmt = {};
+        pfx := inSrcDir ? '' : 'crack/';
+        fmt `"$(pfx)ext/$name.h"`;
+        return fmt.string();
+    }
+
+    bool goodIfdefNesting(Array[Type] ta){
+        if (ta.count()>0){
+            FStr errFMT = {};
+            String errMsg = errFMT `Improperly nested @ifdef conditions:\n`;
+            for (ct :in ta)
+               errMsg += errFMT `$(ct.name)\n`;
+            throw Exception(errMsg);
+         }
+       return true;
+    }
+
+
+@define emitNested(Type, name) {
+    void emitInitializerNested$$Type(Array[Type] ta, Type ct, Formatter o){
+        if (ct.isIfdef()){
+            if (ct.isOpen())
+                ta.append(ct);
+            else {
+                doEmit:=false;
+                if (ta.count()==0) doEmit = true;
+
+                if (ta.count()>0){
+                   ifdefTpe := ta.pop();
+                   endifCond := ct.$$name$$.slice(0, -4);
+                   String ifdefCond  = ifdefTpe.$$name;
+                   if (endifCond != ifdefTpe.$$name) doEmit = true;
+                }
+
+                if (doEmit) ct.emitInitializer(o);
+             }
+        }
+        else {
+            if (ta.count()>0) ta.pop().emitInitializer(o);
+            ct.emitInitializer(o);
+        }
+    }
+}
+
+@emitNested(Type, name);
+@emitNested(Func, name);
+@emitNested(Const, ident);
+
+    void emitCode(Writer out) {
+        o := StandardFormatter(out);
+
+        Array[Type] ta = {}; // For nested ifdefs
+        for (block :in preamble)
+            emitInitializerNestedType(ta, block, o);
+
+        if (!goodIfdefNesting(ta)) die();
+
+        o `
+
+#include $(header('Module'))
+#include $(header('Type'))
+#include $(header('Func'))
+
+extern "C"
+void $(moduleName.join('_'))_rinit() {
+    return;
+}
+
+extern "C"
+void $(moduleName.join('_'))_cinit(crack::ext::Module *mod) {
+    crack::ext::Func *f;
+`;
+
+        for (cString :in crackInject)
+            o `    mod->inject(std::string("$(cString)"));\n`;
+
+        for (typeName :in typeNames)
+            emitInitializerNestedType(ta, types[typeName], o);
+
+        Array[Func] fa = {};
+        for (f :in funcs)
+            emitInitializerNestedFunc(fa, f, o);
+
+        Array[Const] ca = {};
+        for (c :in consts)
+            emitInitializerNestedConst(ca, c, o);
+
+        o `}\n`;
+    }
+
+    void emit() {
+        # emit all of the code
+        cout `emitting $filename\n`;
+        out := StandardFormatter(File(filename, 'w'));
+        emitCode(out);
+    }
+
+    void emitSymbols(Writer out) {
+        o := StandardFormatter(out);
+        uint i=0, l=0, tNum = 0;
+        
+        o `// auto-generated by extgen.crk\n// Constants\n`;
+        i=0;
+        l=0;
+        for (c :in consts) {
+            if (c.isIfdef()) continue;
+            if (i>0) { o `, `; l+=2;}
+            if (l>72) { o `\n`; l=0;}
+
+            o `$(c.ident)`;
+            l+=c.ident.size;
+            i++;
+            tNum++;
+        }
+
+        if (tNum>0) o `,\n`;
+
+        o `\n\n// Types\n`;
+        i=0;
+        for (kv :in types){
+            if (kv.val.class.isSubclass(ArrayType) || kv.val.isBuiltIn() ||
+                kv.val.name.lfind('array[') == 0 || kv.val.name.lfind('function[') == 0 ||
+                (kv.key.lfind('function') == 0 && kv.key.size == 8) ||
+                kv.val.isIfdef()) {
+                continue;
+            }
+            if (!kv.val.isBuiltIn()){
+                if (i>0) { o `, `; l+=2;}
+                if (l>72) { o `\n`; l=0;}
+                o `$(kv.key)`;
+                l+=kv.key.size;
+                i++;
+                tNum++;
+            }
+         }
+
+        if (tNum>0) o `,\n`;
+
+        o `\n\n// Function names\n`;
+        i=0;
+        for (func :in funcs) {
+            if (!func.isIfdef()){
+                if (i>0) o `,\n`;
+                if (i>0 && i%10==0) o `\n`;
+                o `$(func.name)`;
+            }
+
+            i++;
+            tNum++;
+        }
+
+        if (tNum>0) o `,\n`;
+
+        o `\n\n// Function definitions\n`;
+        i=0;
+        for (func :in funcs) {
+            if (!func.isIfdef()){
+                if (i>0 && i%10==0) o `\n`;
+                retTypeRepr := func.retType.name;
+                o `$(retTypeRepr) $(func.name)(`;
+                j:=0;
+                for (arg :in func.args){
+                   if (j>0) o `, `;
+                   o `$(arg.type.name) $(arg.name)`;
+                   j++;
+                }
+                o `);\n`;
+            }
+
+            i++;
+            tNum++;
+        }
+
+        if (constClasses.count() > 0){
+            o `\n\n // Constant class definitions\n`;
+            String prefix;
+            uint plen = 0;
+            for (constClass :in constClasses){
+                prefix = constClass.prefix + constClass.sep;
+                plen = prefix.size;
+
+                o `class $(constClass.prefix) {\n`;
+                i=0;
+                l=0;
+                for (c :in consts) {
+                    if (c.isIfdef()) continue;
+                    if (c.ident.lfind(prefix) == 0 && c.ident.size > plen){
+                        if (i%10 == 0) o `\n`;
+                        o `    $(c.type.name) $(c.ident.substr(plen)) = $(c.ident);\n`;
+                        i++;
+                        tNum++;
+                    }
+                }
+                o `} // $(constClass.prefix)\n`;
+
+            }
+        }
+
+        if (boundClasses.count() > 0){
+            o `\n\n// Bound class definitions\n`;
+            String prefix;
+            uint plen = 0;
+            for (boundClass :in boundClasses)
+                o `class $(boundClass.classname);\n`;
+            o `\n`;
+            for (boundClass :in boundClasses){
+                prefix = boundClass.prefix + boundClass.sep;
+                plen = prefix.size;
+
+                o `class $(boundClass.classname) {\n`;
+                o `    $(boundClass.basetype) $(boundClass.basemember) = null;\n`;
+                o `    oper init($(boundClass.basetype) $(boundClass.basemember)0): $(boundClass.basemember) = $(boundClass.basemember)0 { }\n\n`;
+                i=0;
+                l=0;
+                for (func :in funcs) {
+                    if (!func.isIfdef() && func.args.count() > 0 &&
+                        func.args[0].type.name == boundClass.basetype &&
+                        func.name.size > plen) 
+                    {
+                        StringFormatter cFmt = {}, nFmt = {}; // class-based and normal 
+
+                        if (i>0 && i%10==0) o `\n`;
+
+                        // return type
+                        retTypeRepr := func.retType.name;
+                        nFmt `    $retTypeRepr `;
+                        
+                        bool argBound = false, returnBound = false;
+                        bciReturn := boundMap.get(retTypeRepr);
+                        if (bciReturn) {
+                            cFmt `    $(bciReturn.classname) `;
+                            returnBound = true;
+                        }
+                        else cFmt `$(nFmt.string())`;
+
+                        // function name
+                        if (func.name.substr(0, plen) == prefix){
+                            nFmt `$(func.name.substr(plen))(`;
+                            cFmt `$(func.name.substr(plen))(`;
+                        }
+                        else {
+                            nFmt `$(func.name)(`;
+                            cFmt `$(func.name)(`;
+                        }
+
+                        boundClassInfo bci;
+                        // method arguments
+                        for (uint j = 1; j<func.args.count(); j++){
+                            arg := func.args[j];
+
+                           if (j>1) {
+                               nFmt `, `;
+                               cFmt `, `;
+                            }
+                           nFmt `$(arg.type.name) $(arg.name)`;
+                           bci = boundMap.get(arg.type.name);
+                           if (bci) {
+                                cFmt `$(bci.classname) $(arg.name)`;
+                                argBound = true;
+                            }
+                           else
+                            cFmt `$(arg.type.name) $(arg.name)`;
+                        }
+
+                        nFmt `) { `;
+                        cFmt `) { `;
+
+                        // return function name
+                        if (retTypeRepr != 'void'){
+                            nFmt `return `;
+                            cFmt `return `;
+                        }
+
+                        if (bciReturn) cFmt `$(bciReturn.classname)(`; // Construct object from return type
+
+                        nFmt `$(func.name)(`;
+                        cFmt `$(func.name)(`;
+
+                        // function arguments
+                        for (uint j = 0; j<func.args.count(); j++){
+                            arg := func.args[j];
+
+                           if (j>0) {
+                               nFmt `, `;
+                               cFmt `, `;
+                            }
+
+                           nFmt `$(arg.name)`;
+                           cFmt `$(arg.name)`;
+                           bci = boundMap.get(arg.type.name);
+                           if (bci && j > 0){
+                                cFmt `.$(bci.basemember)`;
+                                argBound = true;
+                            }
+                        }
+
+                        nFmt `); }\n`;
+                        cFmt `)`;
+                        if (bciReturn) cFmt `)`;
+                        cFmt `; }\n`;
+                        
+                        // output strings
+                        nLine := nFmt.string();
+                        cLine := cFmt.string();
+                        o.write(nLine);
+
+                        if (cLine != nLine)
+                            o.write(cLine);
+                        i++;
+                        tNum++;
+                    }
+                }
+
+                o `} // $(boundClass.classname)\n\n`;
+
+            }
+        }
+    }
+
+
+    void writeSymbols() {
+        # write all symbols to file
+        cout `writing symbols to $symbolFilename\n`;
+        out := StandardFormatter(File(symbolFilename, 'w'));
+        emitSymbols(out);
+    }
+
+}
+
+void generateExtension(CrackContext ctx) {
+    ExtensionData ext = {};
+    ext.parse(ctx);
+    if (!ext.filename)
+        ctx.error('no filename specified'.buffer);
+    else
+        ext.emit();
+
+    if (ext.symbolFilename)
+        ext.writeSymbols();
+}

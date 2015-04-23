@@ -1,0 +1,98 @@
+#!/bin/sh
+# Copyright 2011-2012 Google Inc.
+# Copyright 2011-2012 Shannon Weyrick <weyrick@mozek.us>
+# Copyright 2011 Arno Rehn <arno@arnorehn.de>
+# Copyright 2011 Conrad Steenberg <conrad.steenberg@gmail.com>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# Runs the "screen" command on selected tests or the set of all tests.
+# Options:
+#   -n run tests under llvm-native
+#   -f stop on fail
+#   -r recompile the screen program
+#   -j run screen in JIT mode
+#   -v turn on verbose output
+#   -d <test-dir> specify test directory (defaults to basic tests)
+
+root=${SOURCES_ROOT:-"$(dirname $(dirname $0))"}
+builddir=${BUILD_ROOT:-$(test -f "$root/build/crack" && 
+           echo "$root/build" || echo "$root")}   # try to guess BUILD_ROOT if none is provided
+
+echo "Using root directory: $root"
+echo "      build directory: $builddir"
+echo
+
+lib_paths="$root/lib:$root/screen:$builddir/lib"
+builders="-bjit"
+test_dir="$root/screen/tests/basic"
+opts="--diff"
+screen_jit=false
+screen_recompile=false
+
+# try to guess CRACK_LIB_PATH if none is provided
+if [ -z "$CRACK_LIB_PATH" ]; then
+    if [ -f "$root/build/crack" ]; then
+        export CRACK_LIB_PATH=$builddir/lib
+    else
+        export CRACK_LIB_PATH=$builddir/.libs
+    fi
+fi
+
+run_screen() {
+    if $screen_jit; then
+        $builddir/crack -l "$lib_paths" $root/screen/screen.crk \
+            -t "$builddir" -l "$lib_paths" \
+            -c "$builddir/crack" -s "$root" -o "$builddir/screen/output" \
+            "$builders" \
+            $opts "$@"
+        return
+    fi
+
+    if $screen_recompile || [ ! -e $builddir/test/screen.bin ]; then
+        echo "rebuilding screen.bin..."
+        $builddir/crack -B llvm-native -Gl "$lib_paths" \
+            -b out=$builddir/test/screen.bin $root/screen/screen.crk
+    fi
+
+    $builddir/test/screen.bin -c "$builddir/crack" -s "$root" -l "$lib_paths" \
+        -t "$builddir" -o "$builddir/screen/output" "$builders" $opts "$@"
+}
+
+args=$(getopt 'fnrjvd:' "$@")
+eval set -- "$args"
+
+# process options
+while true; do
+    
+    case "$1" in
+        -n) builders='-bnative' ;;
+        -f) opts="$opts --stop-on-fail" ;;
+        -r) screen_recompile=true ;;
+        -j) screen_jit=true ;;
+        -v) opts="$opts -v" ;;
+        -d) test_dir="$2"; shift ;;
+        --) shift ; break ;;
+    esac
+    
+    shift
+done
+
+# ensure output directory exits
+[ ! -e "$builddir/screen/output" ] && mkdir -p "$builddir/screen/output"
+[ ! -e "$builddir/test" ] && mkdir -p "$builddir/test"
+
+tests=""
+for arg in "$@"; do
+    tests="$tests -f $arg"
+done
+
+if [ -n "$tests" ]; then
+    run_screen $tests
+else
+    run_screen -d "$test_dir"
+fi
+
+exit $?

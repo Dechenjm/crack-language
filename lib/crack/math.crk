@@ -1,0 +1,154 @@
+// Binding of libm
+// Copyright 2010-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// Copyright 2011 Google Inc.
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+// See http://anubis.dkuug.dk/jtc1/sc22/wg14/www/docs/n869/ for libm reference
+// As a general rule, follow libm as well as GSL, without copying code.
+// For vector and matrix functions, try to stay close to numpy
+
+// import functions and some constants known at compile time
+@import crack.ann define;
+import crack.lang CString, Exception, InvalidArgumentError, BadCastError;
+
+import crack.runtime acosh, atanh, atoi, atof, strtoi, strtof, strtod, usecs,
+    copysign, nextafter, fdim, pow, testexcept, clearexcept, errno, setErrno,
+    exp, exp2, ilogb, log, log10, log1p, log2, cbrt, abs, hypot,  sqrt, erf,
+    erfc, lgamma, tgamma, ceil, floor, isfinite, isinf, isnan, isnormal,
+    sign, fmod, remainder, nearbyint, rint, round, trunc, expm1, fpclassify,
+    sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, FP_ILOGBNAN,
+    ALL_EXCEPT, INVALID, DIVBYZERO, OVERFLOW, FP_NAN, FP_NORMAL, FP_SUBNORMAL
+    , FP_ZERO, FP_ILOGB0, HUGE_VAL, INFINITY, NAN, FP_INFINITE, UNDERFLOW,
+    ERANGE, EINVAL;
+
+import crack.io FStr;
+
+/// Define common constants
+const float E =            2.7182818284590452354,   // e
+            LOG2E =        1.4426950408889634074,   // base 2 log of e
+            LOG10E =       0.43429448190325182765,  // base 10 log of e
+            LN2 =          0.69314718055994530942,  // base e log of 2
+            LN10 =         2.30258509299404568402,  // base e log of 10
+            LNPI =         1.14472988584940017414,  // ln(pi)
+            PI =           3.14159265358979323846,  // pi
+            PI_2 =         1.57079632679489661923,  // pi/2
+            PI_4 =         0.78539816339744830962,  // pi/4
+            PI1 =          0.31830988618379067154,  // 1/pi
+            PI2 =          0.63661977236758134308,  // 2/pi
+            SQRTPI2 =      1.12837916709551257390,  // 2/sqrt(pi)
+            SQRT2 =        1.41421356237309504880,  // sqrt(2)
+            SQRT3 =        1.73205080756887729353,  // sqrt(3)
+            SQRT1_2 =      0.70710678118654752440,  // 1/sqrt(2)
+            SQRTPI =       1.77245385090551602730,  // sqrt(pi)
+            GAMMA =        0.57721566490153286061;  // Euler's constant gamma
+
+// A few simple functions, overlaoded with various types
+// Generics really helps here
+@define _max(Tpe){
+   Tpe max(Tpe v1, Tpe v2){
+     if (v1>v2) return v1;
+     return v2;
+   }
+}
+
+@_max(int16)
+@_max(int32)
+@_max(uint16)
+@_max(uint32)
+@_max(float32)
+@_max(int64)
+@_max(uint64)
+@_max(float64)
+
+@define _min(Tpe){
+   Tpe min(Tpe v1, Tpe v2){
+     if (v1>v2) return v1;
+     return v2;
+   }
+}
+
+@_min(int16)
+@_min(uint16)
+@_min(int32)
+@_min(uint32)
+@_min(float32)
+@_min(int64)
+@_min(uint64)
+@_min(float64)
+
+// Augment the atoi(char*) imported from _math
+int atoi(String s) {
+ return atoi(CString(s).buffer);
+}
+
+// CString is already NULL terminated
+int atoi(CString s) {
+  return atoi(s.buffer);
+}
+
+// Augment the strtoi(char*) imported from _math
+int strtoi(String s) {
+    int result = strtoi(CString(s).buffer);
+    int err = errno();
+
+    if (!err) return result;
+    else if (err == ERANGE)
+        throw InvalidArgumentError(FStr() I`Value '$s' out of range in \
+                                            converting string to integer`);
+    else if (err == EINVAL)
+        throw BadCastError(FStr() I`Invalid input '$s' in converting string to \
+                                    integer`);
+    else 
+        throw Exception(FStr() `Unknown error in strtoi($(s)), errno = $err`);
+}
+
+
+// Augment the atof(char*) imported from _math
+float atof(String s) {
+    return atof(CString(s).buffer);
+}
+
+// CString is already NULL terminated
+float atof(CString s) {
+  return atof(s.buffer);
+}
+
+// Augment the strtof(char*) imported from _math
+@define _strtof(String, ext, FloatType) {
+    FloatType strto$$ext(String s) {
+        FloatType result = strtof(CString(s).buffer);
+        int err = errno();
+
+        if (!err)
+            return result;
+        else if (err == ERANGE)
+            throw InvalidArgumentError(FStr() I`Value '$s' out of range \
+                                                converting string to float`);
+        else if (err == EINVAL)
+            throw BadCastError(FStr() I`Invalid input '$s' in converting \
+                                        string to float`);
+        else 
+            throw Exception(FStr() I`Unknown error in strtof($(s)), errno = \
+                                     $err`);
+    }
+}
+
+@_strtof(String, f, float)
+@_strtof(String, d, float64)
+
+// export all symbols that we want to expose from the runtime.
+@export_symbols acosh, atanh, atoi, atof, strtoi, strtof, strtod, usecs,
+                copysign, nextafter, fdim, pow, testexcept, clearexcept,
+                errno, setErrno, exp, exp2, ilogb, log, log10, log1p,
+                log2, cbrt, abs, hypot,  sqrt, erf, erfc, lgamma, tgamma,
+                ceil, floor, isfinite, isinf, isnan, isnormal, sign,
+                fmod, remainder, nearbyint, rint, round, trunc, expm1,
+                fpclassify, sin, cos, tan, asin, acos, atan, sinh, cosh,
+                tanh, asinh, FP_ILOGBNAN, ALL_EXCEPT, INVALID, DIVBYZERO,
+                OVERFLOW, FP_NAN, FP_NORMAL, FP_SUBNORMAL, FP_ZERO,
+                FP_ILOGB0, HUGE_VAL, INFINITY, NAN, FP_INFINITE,
+                UNDERFLOW, ERANGE, EINVAL;

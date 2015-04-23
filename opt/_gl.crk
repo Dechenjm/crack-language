@@ -1,0 +1,320 @@
+// Copyright 2010-2011 Google Inc.
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+# Crack GL bindings.
+
+@import crack.extgen generateExtension;
+
+@generateExtension crack.ext._gl {
+    @filename 'opt/_gl.cc'
+    @inject '#include <GL/gl.h>\n'
+    @crack_internal
+
+    uint glGetError();
+
+    const uint GL_PROJECTION,
+               GL_MODELVIEW;
+
+    void glMatrixMode(uint mode);
+    void glLoadIdentity();
+    void glFrustum(float64 left, float64 right, float64 bottom, float64 top, 
+                   float64 nearVal, 
+                   float64 farVal
+                   );
+    void glFlush();
+    void glMultMatrixd(array[float64] matrix);
+    void glMultMatrixf(array[float32] matrix);
+    void glTranslated(float64 x, float64 y, float64 z);
+    void glTranslatef(float32 x, float32 y, float32 z);
+
+    # data types
+    const uint GL_BYTE,
+               GL_UNSIGNED_BYTE,
+               GL_SHORT,
+               GL_UNSIGNED_SHORT,
+               GL_INT,
+               GL_UNSIGNED_INT,
+               GL_FLOAT,
+               GL_2_BYTES,
+               GL_3_BYTES,
+               GL_4_BYTES,
+               GL_DOUBLE;
+
+
+    const uint GL_POINTS,
+               GL_LINES,
+               GL_LINE_LOOP,
+               GL_LINE_STRIP,
+               GL_TRIANGLES,
+               GL_TRIANGLE_STRIP,
+               GL_TRIANGLE_FAN,
+               GL_QUADS,
+               GL_QUAD_STRIP,
+               GL_POLYGON;
+    
+    void glBegin(uint mode);
+    void glEnd();
+
+    void  glVertex2d( float64 x, float64 y );
+    void  glVertex2f( float32 x, float32 y );
+    void  glVertex2i( int x, int y );
+   
+    void  glVertex3d( float64 x, float64 y, float64 z );
+    void  glVertex3f( float32 x, float32 y, float32 z );
+    void  glVertex3i( int x, int y, int z );
+   
+    void  glVertex4d( float64 x, float64 y, float64 z, float64 w );
+    void  glVertex4f( float32 x, float32 y, float32 z, float32 w );
+    void  glVertex4i( int x, int y, int z, int w );
+   
+    void  glVertex2dv( array[float64] v );
+    void  glVertex2fv( array[float32] v );
+    void  glVertex2iv( array[int] v );
+   
+    void  glVertex3dv( array[float64] v );
+    void  glVertex3fv( array[float32] v );
+    void  glVertex3iv( array[int] v );
+   
+    void  glVertex4dv( array[float64] v );
+    void  glVertex4fv( array[float32] v );
+    void  glVertex4iv( array[int] v );
+
+    void glNormal3b( byte nx, byte ny, byte nz );
+    void glNormal3d( float64 nx, float64 ny, float64 nz );
+    void glNormal3f( float32 nx, float32 ny, float32 nz );
+    void glNormal3i( int nx, int ny, int nz );
+
+    void glNormal3bv( array[byte] v );
+    void glNormal3dv( array[float64] v );
+    void glNormal3fv( array[float32] v );
+    void glNormal3iv( array[int] v );
+
+    void glColor3b( byte red, byte green, byte blue );
+    void glColor3d( float64 red, float64 green, float64 blue );
+    void glColor3f( float32 red, float32 green, float32 blue );
+    void glColor3i( int red, int green, int blue );
+    void glColor3ui( uint red, uint green, uint blue );
+    
+    void  glColor4b( byte red, byte green,
+                                    byte blue, byte alpha );
+    void  glColor4d(float64 red, float64 green, float64 blue, float64 alpha);
+    void  glColor4f(float32 red, float32 green, float32 blue, float32 alpha);
+    void  glColor4i( int red, int green, int blue, int alpha );
+    void  glColor4ui( uint red, uint green, uint blue, uint alpha );
+
+    void glColor3bv( array[byte] v );
+    void glColor3dv( array[float64] v );
+    void glColor3fv( array[float32] v );
+    void glColor3iv( array[int] v );
+    void glColor3uiv( array[uint] v );
+
+    void  glColor4bv( array[byte] v );
+    void  glColor4dv( array[float64] v );
+    void  glColor4fv( array[float32] v );
+    void  glColor4iv( array[int] v );
+    void  glColor4uiv( array[uint] v );
+
+    void glViewport(int x, int y, int width, int height);
+
+    void glClearColor(float32 red, float32 green, float32 blue, float32 alpha);
+    void glClearDepth(float64 depth);
+
+    const uint GL_CURRENT_BIT,
+               GL_POINT_BIT,
+               GL_LINE_BIT,
+               GL_POLYGON_BIT,
+               GL_POLYGON_STIPPLE_BIT,
+               GL_PIXEL_MODE_BIT,
+               GL_LIGHTING_BIT,
+               GL_FOG_BIT,
+               GL_DEPTH_BUFFER_BIT,
+               GL_ACCUM_BUFFER_BIT,
+               GL_STENCIL_BUFFER_BIT,
+               GL_VIEWPORT_BIT,
+               GL_TRANSFORM_BIT,
+               GL_ENABLE_BIT,
+               GL_COLOR_BUFFER_BIT,
+               GL_HINT_BIT,
+               GL_EVAL_BIT,
+               GL_LIST_BIT,
+               GL_TEXTURE_BIT,
+               GL_SCISSOR_BIT,
+               GL_ALL_ATTRIB_BITS;
+
+    void glClear(uint mask);
+    
+    # polygons
+    const uint GL_FILL;
+    
+    const uint GL_SMOOTH,
+               GL_FRONT_AND_BACK;
+    
+    void glShadeModel(uint mode);
+    void glPolygonMode( uint face, uint mode );     
+
+    const uint GL_LIGHTING,
+               GL_LIGHT0,
+               GL_LIGHT1,
+               GL_LIGHT2,
+               GL_LIGHT3,
+               GL_LIGHT4,
+               GL_LIGHT5,
+               GL_LIGHT6,
+               GL_LIGHT7,
+               GL_SPOT_EXPONENT,
+               GL_SPOT_CUTOFF,
+               GL_CONSTANT_ATTENUATION,
+               GL_LINEAR_ATTENUATION,
+               GL_QUADRATIC_ATTENUATION,
+               GL_AMBIENT,
+               GL_DIFFUSE,
+               GL_SPECULAR,
+               GL_SHININESS,
+               GL_EMISSION,
+               GL_POSITION,
+               GL_SPOT_DIRECTION,
+               GL_AMBIENT_AND_DIFFUSE,
+               GL_COLOR_INDEXES,
+               GL_LIGHT_MODEL_TWO_SIDE,
+               GL_LIGHT_MODEL_LOCAL_VIEWER,
+               GL_LIGHT_MODEL_AMBIENT,
+               GL_FRONT_AND_BACK,
+               GL_SHADE_MODEL,
+               GL_FLAT,
+               GL_SMOOTH,
+               GL_COLOR_MATERIAL,
+               GL_COLOR_MATERIAL_FACE,
+               GL_COLOR_MATERIAL_PARAMETER,
+               GL_NORMALIZE;
+
+
+    void glLightf( uint light, uint pname, float32 param );
+    void glLighti( uint light, uint pname, int param );
+    void glLightfv( uint light, uint pname, array[float32] params );
+    void glLightiv( uint light, uint pname, array[int] params );
+    
+    const uint GL_DEPTH_TEST, GL_TEXTURE_2D, GL_LIGHTING;
+     
+    void glEnable(uint cap);
+    void glDisable(uint cap);
+     
+    # depth stuff
+    const uint GL_LEQUAL;
+     
+    void glDepthFunc(uint func);
+    void glDepthMask(bool flag);
+    
+    # hints
+    const uint GL_PERSPECTIVE_CORRECTION_HINT,
+               GL_POINT_SMOOTH_HINT,
+               GL_LINE_SMOOTH_HINT,
+               GL_POLYGON_SMOOTH_HINT,
+               GL_FOG_HINT,
+               GL_DONT_CARE,
+               GL_FASTEST,
+               GL_NICEST;
+
+    
+    void glHint(uint target, uint mode);
+
+    # textures
+    void glGenTextures( int n, array[uint] textures );
+    void glDeleteTextures( int n, array[uint] textures);
+    void glBindTexture( uint target, uint texture );
+
+    # fog
+    const uint GL_FOG,
+               GL_FOG_MODE,
+               GL_FOG_DENSITY,
+               GL_FOG_COLOR,
+               GL_FOG_INDEX,
+               GL_FOG_START,
+               GL_FOG_END,
+               GL_LINEAR,
+               GL_EXP,
+               GL_EXP2;
+
+    # small subset of texture mapping stuff.
+    const uint GL_TEXTURE_MIN_FILTER,
+               GL_TEXTURE_MAG_FILTER;
+
+    void glTexImage2D( uint target, int level, int internalFormat,
+                       int width, int height,
+                       int border, 
+                       uint format, 
+                       uint type,
+                       voidptr pixels
+                       );
+
+    # small subset of buffers, pixel drawing/reading
+    const uint GL_RGB, GL_RGBA;
+
+    # small subset of OpenGL 1.1 stuff
+    const uint GL_RGB8, GL_RGBA8;
+
+    void glTexParameterf( uint target, uint pname, float param );
+    void glTexParameteri( uint target, uint pname, int param );
+    void glTexParameterfv( uint target, uint pname, array[float] params );
+    void glTexParameteriv( uint target, uint pname, array[int] params );
+    void glGetTexParameterfv( uint target, uint pname, array[float] params);
+    void glGetTexParameteriv( uint target, uint pname, array[int] params );
+    void glGetTexLevelParameterfv( uint target, int level,
+                                   uint pname, array[float] params
+                                   );
+    void glGetTexLevelParameteriv( uint target, int level,
+                                   uint pname, array[int] params
+                                   );
+
+    void glTexCoord1d( float64 s );
+    void glTexCoord1f( float32 s );
+    void glTexCoord1i( int s );
+    
+    void glTexCoord2d( float64 s, float64 t );
+    void glTexCoord2f( float32 s, float32 t );
+    void glTexCoord2i( int s, int t );
+    
+    void glTexCoord3d( float64 s, float64 t, float64 r );
+    void glTexCoord3f( float32 s, float32 t, float32 r );
+    void glTexCoord3i( int s, int t, int r );
+    
+    void glTexCoord4d( float64 s, float64 t, float64 r, float64 q );
+    void glTexCoord4f( float32 s, float32 t, float32 r, float32 q );
+    void glTexCoord4i( int s, int t, int r, int q );
+    
+    void glTexCoord1dv( array[float64] v );
+    void glTexCoord1fv( array[float32] v );
+    void glTexCoord1iv( array[int] v );
+    
+    void glTexCoord2dv( array[float64] v );
+    void glTexCoord2fv( array[float32] v );
+    void glTexCoord2iv( array[int] v );
+    
+    void glTexCoord3dv( array[float64] v );
+    void glTexCoord3fv( array[float32] v );
+    void glTexCoord3iv( array[int] v );
+    
+    void glTexCoord4dv( array[float64] v );
+    void glTexCoord4fv( array[float32] v );
+    void glTexCoord4iv( array[int] v );
+
+    # Blending
+    const uint GL_BLEND,
+               GL_BLEND_SRC,
+               GL_BLEND_DST,
+               GL_ZERO,
+               GL_ONE,
+               GL_SRC_COLOR,
+               GL_ONE_MINUS_SRC_COLOR,
+               GL_SRC_ALPHA,
+               GL_ONE_MINUS_SRC_ALPHA,
+               GL_DST_ALPHA,
+               GL_ONE_MINUS_DST_ALPHA,
+               GL_DST_COLOR,
+               GL_ONE_MINUS_DST_COLOR,
+               GL_SRC_ALPHA_SATURATE;
+
+    void glBlendFunc(uint sfactor, uint dfactor);
+}

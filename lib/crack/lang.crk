@@ -1,0 +1,1263 @@
+# Copyright 2010-2012 Google Inc.
+# Copyright 2010-2011 Shannon Weyrick <weyrick@mozek.us>
+# Copyright 2010-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+import crack.runtime abort, c_strerror, errno, free, getLocation, strcpy, 
+    strlen, malloc, memcpy, memset, memcmp, memmove, registerHook, write, 
+    BAD_CAST_FUNC, EXCEPTION_FRAME_FUNC, EXCEPTION_MATCH_FUNC, 
+    EXCEPTION_RELEASE_FUNC, EXCEPTION_UNCAUGHT_FUNC, printuint64;
+@import crack._poormac define;
+
+@export_symbols free;
+
+const bool true = (1 == 1), false = (1 == 0);
+
+class Object;
+class Writer;
+class Formatter;
+class String;
+class StaticString;
+
+void _writeObject(Writer out);
+void _throwAssertionError(byteptr text);
+void _throwIndexError(byteptr text);
+void _formatObject(Formatter f, Object o);
+
+## Base class for things that you don't want derived from object or VTableBase.
+class FreeBase {};
+
+## The Object base class.  Object provides the basic reference counting
+## mechanism, and most user classes should be derived from it.
+class Object : VTableBase {
+    atomic_int refCount;
+
+    # have to declare these before "oper init" otherwise it won't generate a
+    # bind in "oper new"
+    oper bind();
+    oper release();
+
+    oper init() {
+    }
+
+    # delete virtual function
+    oper del() {
+        if (refCount)
+            _throwAssertionError("Object with non-zero ref count deleted!");
+    }
+
+    oper bind() {
+        if (!(this is null))
+            refCount += 1;
+    }
+
+    oper release() {
+        if (this is null)
+            return;
+
+        if (!(refCount -= 1)) {
+            this.oper del();
+            free(this);
+        }
+    }
+
+    bool isTrue() {
+        return true;
+    }
+
+    ## Comparison function - returns a value < 0 if this < other, 0 if this is
+    ## equal to other, > 0 if this > other.
+    int cmp(Object other) {
+        if (this is other) return 0;
+        else return uintz(this) > uintz(other) ? 1 : -1;
+    }
+
+    @final bool oper <(Object other) {
+        return this is null ? !(other is null) : (other is null ? false : cmp(other) < 0);
+    }
+
+    @final bool oper <=(Object other) {
+        return this is null ? true : (other is null ? false : cmp(other) <= 0);
+    }
+
+    @final bool oper ==(Object other) {
+        return this is null ? other is null : (other is null ? false :cmp(other) == 0);
+    }
+
+    @final bool oper !=(Object other) {
+        return this is null ? !(other is null) : (other is null ? false : cmp(other) != 0);
+    }
+
+    @final bool oper >=(Object other) {
+        return this is null ? other is null : ( other is null ? false : cmp(other) >= 0);
+    }
+
+    @final bool oper >(Object other) {
+        return this is null ? false : (other is null ? true : cmp(other) > 0);
+    }
+
+    ## Returns the hash value of the object.  Hash values have a special 
+    ## relationsip with equality, a.cmp(b) == 0 implies a.makeHashVal() == 
+    ## b.makeHashVal().  If you override this, you must also override cmp() 
+    ## and vice-versa in order to preserve this relationship.
+    uint makeHashVal() {
+        v := uintz(this);
+        return v ^ (v >> 9) ^ (v << 7);
+    }
+
+    @final oper to bool() {
+        if (this is null)
+            return false;
+        else
+            return isTrue();
+    }
+    
+    ## Returns true if the object is a direct or indirect instance of the 
+    ## class.
+    @final bool isa(Class cls) {
+        return this.class.isSubclass(cls);
+    }
+
+    void formatTo(Formatter f) {
+        _formatObject(f, this);
+    }
+};
+
+class Buffer;
+
+@abstract class Writer : VTableBase {
+
+    ## Write the buffer to the writer.
+    @abstract void write(Buffer data);
+
+    ## Flush the contents of the buffer.
+    void flush() {}
+
+    # since we can't load annotations yet, implement an interface by hand
+    @abstract Object oper from Writer();
+    oper bind() { if (!(this is null)) this.oper from Writer().oper bind(); }
+    oper release() {
+        if (!(this is null)) this.oper from Writer().oper release();
+    }
+}
+
+@abstract class Formatter : Object, Writer {
+
+    @abstract Object oper from Formatter();
+    @abstract void format(StaticString data);
+
+    @abstract void format(int16 val);
+    @abstract void format(uint16 val);
+    @abstract void format(int32 val);
+    @abstract void format(uint32 val);
+    @abstract void format(int64 val);
+    @abstract void format(uint64 val);
+
+    @abstract void format(float32 val);
+    @abstract void format(float64 val);
+
+    @abstract void format(bool val);
+    @abstract void format(Object obj);
+    @abstract void format(byteptr cstr);
+
+    @abstract void format(voidptr cstr);
+
+}
+
+class CString;
+
+String _getRepr(Buffer buffer);
+CString _makeCString(Buffer val);
+
+## The buffer base class containing a bytebuf and size.
+class Buffer : Object {
+
+    // buffer and size.
+    uint size;
+    byteptr buffer;
+
+    oper init(byteptr buffer, uint size) : buffer = buffer, size = size {}
+
+    bool isTrue() {
+        return size;
+    }
+
+    bool isEmpty() {
+        return (size == 0);
+    }
+
+    void formatTo(Formatter f) {
+        f.write(this);
+    }
+
+    byte oper [](uint index) {
+        if (index >= size)
+            _throwIndexError('string index out of bounds');
+        return buffer[index];
+    }
+
+    byte oper [](int index) {
+        if (index < 0)
+            index = size + index;
+        if (index < 0 || index >= size)
+            _throwIndexError('string index out of bounds');
+        return buffer[uint(index)];
+    }
+
+    ## Override Object.cmp() to do buffer comparison.
+    int cmp(Object other) {
+        # deal with the simple case
+        if (this is other)
+            return 0;
+            
+        if (other is null)
+            return 1;
+
+        # if the other object is a string, do string comparison.
+        if (other.isa(Buffer)) {
+            os := Buffer.unsafeCast(other);
+
+            # if both strings are the same size, this is just a straight
+            # memcmp().
+            int rc;
+            if (size == os.size) {
+                return memcmp(buffer, os.buffer, size);
+
+            # if one string is longer than the other, only compare the
+            # common-sized substring and if those are equal, the longer one is
+            # greater
+            } else if (size > os.size) {
+                rc = memcmp(buffer, os.buffer, os.size);
+                if (!rc) rc = 1;
+            } else {
+                rc = memcmp(buffer, os.buffer, size);
+                if (!rc) rc = -1;
+            }
+            return rc;
+        } else {
+            # if other is not a string, it is not equal.
+            return 1;
+        }
+    }
+    
+    uint makeHashVal() {
+        uint hash;
+        for (int i = 0; i < size; ++i)
+            hash = (hash << 8 ^ hash >> 24) ^ buffer[i];
+        return hash;
+    }
+
+    @define __findBreak 0 break $$
+    @define __findReturn 0 return pos $$
+    @define __findFail 0 return -1; $$
+    @define __findCheck 0 if (pos == size) return -1; $$
+
+    @define __lfindLoop 2
+        for (; pos < size; ++pos)
+            if (buffer[pos] == c)
+                @$1;
+        @$2
+    $$
+
+    @define __rfindLoop 2
+        for (; pos >= 0; --pos)
+            if (buffer[pos] == c)
+                @$1;
+        @$2
+    $$
+    
+    @define __lfind 0 @__lfindLoop __findReturn __findFail $$
+    @define __rfind 0 @__rfindLoop __findReturn __findFail $$
+    
+    @define __findPosChecks 0
+        if (pos < 0)
+            pos += size;
+
+        if (pos >= size || pos < 0)
+            return -1;
+    $$        
+    
+    ## Find the rightmost index of a byte in a string, starting at
+    ## index pos
+    ## returns -1 if not found
+    int rfind(byte c, uint pos) {
+        @__findPosChecks
+        @__rfind
+    }
+
+    ## Find the rightmost index of a byte in a string
+    ## returns -1 if not found
+    ## note this function is not safe for strings larger than INT_MAX
+    int rfind(byte c) {
+        int pos = size - 1;
+        @__rfind
+    }
+    
+    ## Find the rightmost index of the substring 'sub' in the string at or 
+    ## before 'pos'.  Returns -1 if not found.
+    int rfind(Buffer sub, int pos) {
+        @__findPosChecks
+        c := sub.buffer[0];
+        while (true) {
+            @__rfindLoop __findBreak __findCheck
+            if (pos + sub.size > size || 
+                memcmp(sub.buffer, buffer + pos, sub.size)
+                )
+                --pos;
+            else
+                return pos;
+        }
+        return -1;
+    }
+    
+    ## Find the rightmost index of the substring 'sub' in the string.
+    int rfind(Buffer sub) {
+        return rfind(sub, -1);
+    }
+    
+    ## Find the rightmost index of the substring '
+
+    ## Find the leftmost index of a byte in a string, starting at
+    ## index pos
+    ## returns -1 if not found
+    int lfind(byte c, int pos) {
+        @__findPosChecks
+        @__lfind
+    }
+
+    ## Find the leftmost index of a byte in a string
+    ## returns -1 if not found
+    ## note this function is not safe for strings larger than INT_MAX
+    int lfind(byte c) {
+        int pos = 0;
+        @__lfind
+    }
+
+    ## find the leftmost index after pos of the substring 'sub'.
+    ## Returns -1 if not found.
+    int lfind(Buffer sub, int pos) {
+        @__findPosChecks
+        
+        c := sub.buffer[0];
+        while (true) {
+            @__lfindLoop __findBreak __findCheck
+            if (pos + sub.size > size ||
+                memcmp(sub.buffer, buffer + pos, sub.size)
+                ) {
+                ++pos;
+                continue;
+            } else {
+                return pos;
+            }
+        }
+        return -1;
+    }
+    
+    ## Find the leftmost index of the substring 'sub'.
+    int lfind(Buffer sub) { return lfind(sub, 0); }
+
+    ## Returns true if the buffer starts with 'prefix'.
+    @final bool startsWith(Buffer prefix) {
+        return size >= prefix.size && 
+               !memcmp(buffer, prefix.buffer, prefix.size);
+    }
+    
+    ## Returns true if the buffer ends with 'suffix'.
+    @final bool endsWith(Buffer suffix) {
+        return size >= suffix.size &&
+               !memcmp(buffer + (size - suffix.size), suffix.buffer, 
+                      suffix.size
+                      );
+    }
+    
+    String getRepr() {
+        return _getRepr(this);
+    }
+
+    
+    ## Returns the buffer converted to the CString (or the object itself, if 
+    ## it already is a CString).
+    CString toCString() {
+        return _makeCString(this);
+    }
+}
+
+void _writeObject(Writer out) {
+    out.write(Buffer('<Object>', 8));
+}
+
+void _formatObject(Formatter f, Object o) { 
+    f.write(Buffer('<Object>', 8)); 
+}
+
+## A writable buffer.  You can assume that it is safe to write to one of these.
+class WriteBuffer : Buffer {
+
+    ## buffer capacity
+    uint cap;
+
+    oper init(byteptr buffer, uint size) : Buffer(buffer, size), cap = size {}
+
+    ## Construct a new buffer from a buffer pointer, an initial size and 
+    ## capacity.
+    oper init(byteptr buffer, uint size, uint cap) : 
+        Buffer(buffer, size), 
+        cap = cap {
+    }
+
+    ## Move data from an arbitrary byteptr into the buffer.  The end of the 
+    ## new data must not exceed buffer capacity, if it exceeds the current 
+    ## size the size will be adjusted to fit it.
+    void move(uint start, byteptr ptr, uint count) {
+        if (start + count > cap)
+            _throwIndexError('Move target out of bounds');
+        memmove(buffer + start, ptr, count);
+        if (start + count > size)
+            size = start + count;
+    }
+
+    ## move data from one place in the buffer to another place in the buffer.  
+    ## Rules concerning size and capacity in move(uint, byteptr, int) apply.
+    void move(uint newStart, uint oldStart, uint count) {
+        if (oldStart + count > size)
+            _throwIndexError('Move source out of bounds');
+        move(newStart, buffer + oldStart, count);
+        if (newStart + count > size)
+            size = newStart + count;
+    }
+
+    ## move a buffer to a place in this buffer.
+    ## Rules concerning size and capacity in move(uint, byteptr, int) apply.
+    void move(uint newStart, Buffer buf) {
+        if (newStart + buf.size > cap)
+            _throwIndexError('Move target out of bounds');
+        move(newStart, buf.buffer, buf.size);
+        if (newStart + buf.size > size)
+            size = newStart + buf.size;
+    }
+    
+    ## Move the contents of the buffer from pos to size to the beginning of 
+    ## the buffer, and modify size accordingly (the new size is size - pos).
+    ## This effectively truncates the beginning of the buffer without doing 
+    ## any memory allocation/deallocation.
+    void compact(uint pos) {
+        if (pos > size)
+            _throwIndexError('Compress argument out of bounds');
+        move(0, pos, size - pos);
+        size = size - pos;
+    }
+}
+
+## A managed buffer.  Deletes the bytebuf when it goes out of scope.
+class ManagedBuffer : WriteBuffer {
+
+    oper init(uint cap) : WriteBuffer(malloc(cap), 0, cap) {}
+    
+    ## Orphan's the byte buffer, returning it for use by the caller.  The
+    ## caller is responsible for freeing it.
+    byteptr orphan() {
+        temp := buffer;
+        buffer = null;
+        size = 0;
+        return temp;
+    }
+
+    ## Grow the buffer to the new capacity.
+    void grow(uint newCap) {
+        # special case cap = 0 for initialization.
+        if (!newCap) {
+            newCap = 16;
+        } else if (newCap <= cap) {
+            puts('attempt to grow to a smaller or same size.');
+            abort();
+        }
+
+        newBuffer := malloc(newCap);
+        if (!(buffer is null)) {
+            memcpy(newBuffer, buffer, size);
+            free(buffer);
+        }
+        buffer = newBuffer;
+        cap = newCap;
+    }
+
+    oper del() {
+        if (!(buffer is null))
+            free(buffer);
+    }
+};
+
+## AppendBuffer lets you add stuff onto the end of it.
+class AppendBuffer : ManagedBuffer {
+
+    oper init(uint cap) : ManagedBuffer(cap) {}
+
+    ## Append a single byte to the buffer, growing if necessary.
+    void append(byte c) {
+        if (size >= cap)
+            grow(cap * 2);
+        buffer[size++] = c;
+    }
+
+    ## Extend the buffer from the pointer and size.  That is, concatenate the 
+    ## buffer defined by buf, bufSize onto the end of the current buffer.
+    #unsafe
+    @final void extend(byteptr buf, uint bufSize) {
+        uint newSize = size + bufSize;
+        if (newSize > cap)
+            # grow to the larger of newSize and cap * 2
+            if (newSize > cap * 2)
+                grow(newSize);
+            else
+                grow(cap * 2);
+        move(size, buf, bufSize);
+        size = newSize;
+    }
+
+    ## Extend the buffer with the (entire) other buffer.
+    @final void extend(Buffer other) {
+        extend(other.buffer, other.size);
+    }
+
+    ## Extend the buffer with a portion of the other buffer.
+    @final void extend(Buffer other, uint len) {
+        if (len > other.size)
+            _throwIndexError('Extend length out of bounds');
+        extend(other.buffer, len);
+    }
+
+}
+
+# substring forward declarations - we need the full array to support doing
+# these efficiently
+
+class SubString;
+SubString _substr(SubString target, uint pos, uint len);
+SubString substr(SubString target, int pos, uint len);
+SubString substr(SubString target, int pos);
+SubString slice(SubString target, int start, int end);
+SubString slice(SubString target, int start);
+SubString _substr(String target, uint pos, uint len);
+SubString substr(String target, int pos, uint len);
+SubString substr(String target, int pos);
+SubString slice(String target, int start, int end);
+SubString slice(String target, int start);
+String rtrim(String target);
+
+@define substr2 1 {
+
+        # adjust a negative position
+        if (pos < 0)
+            pos = int($1.size) + pos;
+
+        return _substr($1, uint(pos), len);
+    }
+$$
+
+@define substr1 1 {
+
+        # adjust a negative position
+        if (pos < 0)
+            pos = int($1.size) + pos;
+
+        return _substr($1, uint(pos), $1.size - uint(pos));
+    }
+$$
+
+@define slice2 1 {
+
+        # adjust negative offsets
+        if (start < 0)
+            start = int($1.size) + start;
+        if (end < 0)
+            end = int($1.size) + end;
+
+        # bounds checking
+        if (end < start)
+            _throwIndexError('Start of slice is after end.');
+
+        return _substr($1, uint(start), uint(end - start));
+    }
+$$
+
+@define slice1 1 {
+
+        # adjust negative offsets
+        if (start < 0)
+            start = int($1.size) + start;
+
+        # bounds checking
+        if (uint(start) > $1.size)
+            _throwIndexError('Start of slice is after end.');
+
+        return _substr($1, uint(start), $1.size - uint(start));
+    }
+$$
+
+## The string class.  Strings are immutable managed Buffer's - when they are
+## deleted, their buffer goes away.
+## The buffer is not guaranteed to be null-terminated, use CString if
+## that's a requirement
+class String : Buffer {
+
+    ## Initialize from a buffer.  This copies the buffer, it does not assume
+    ## ownership.
+    oper init(Buffer buf) : Buffer(malloc(buf.size), buf.size) {
+        memcpy(buffer, buf.buffer, buf.size);
+    }
+
+    ## Initialize with a given length and byte
+    oper init(uint size, byte c) : Buffer(malloc(size), size) {
+        memset(buffer, c, size);
+    }
+
+
+    ## Initialize from a WriteBuffer and optionally take ownership of the
+    ## buffer.
+    oper init(ManagedBuffer buf, bool takeOwnership) :
+        Buffer(null, 0) {
+
+        if (takeOwnership) {
+            size = buf.size;
+            buffer = buf.orphan();
+        } else {
+            size = buf.size;
+            buffer = memcpy(malloc(buf.size), buf.buffer, buf.size);
+        }
+    }
+
+    ## Initialize from a portion of a WriteBuffer and optionally take ownership
+    ## of the buffer.
+    oper init(ManagedBuffer buf, uint len, bool takeOwnership) :
+        Buffer(null, 0) {
+
+        if (takeOwnership) {
+            ## NOTE if len < buf.size, the space is wasted.
+            ## realloc if len << buf.size?
+            size = len;
+            buffer = buf.orphan();
+        } else {
+            size = len;
+            buffer = memcpy(malloc(buf.size), buf.buffer, len);
+        }
+    }
+
+    ## Initialize from a substring of buffer.  This copies the buffer from
+    ## index pos to pos + len.  It does not assume ownership.
+    oper init(Buffer buf, uint pos, uint len) : Buffer(malloc(len), len) {
+        if (pos + len > buf.size)
+            _throwIndexError('out of bounds copy');
+        memcpy(buffer, buf.buffer + pos, len);
+    }
+
+    ## Initialize from byte pointer and size and optionally take ownership.
+    oper init(byteptr buf, uint size, bool takeOwnership) :
+        Buffer(takeOwnership ? buf : memcpy(malloc(size), buf, size),
+               size
+               ) {
+    }
+
+    ## Initialize from a null-terminated c-string
+    oper init(byteptr cString) : Buffer(null, strlen(cString)) {
+        buffer = malloc(size + 1);
+        strcpy(buffer, cString);
+    }
+
+    ## Create an empty string.
+    oper init() : Buffer(malloc(0), 0) {}
+
+    void _freeBuffer() {
+        free(buffer);
+    }
+
+    oper del() {
+        _freeBuffer();
+    }
+
+    ## Concatenation
+    String oper +(String rhs) {
+        uint newBufferSize = this.size + rhs.size;
+        byteptr newRawBuffer = malloc(newBufferSize);
+        memcpy(newRawBuffer, this.buffer, this.size);
+        memcpy(newRawBuffer+this.size, rhs.buffer, rhs.size);
+        return String(newRawBuffer, newBufferSize, true);
+    }
+
+    String oper +(byte chr) {
+        uint newBufferSize = this.size + 1;
+        byteptr newRawBuffer = malloc(newBufferSize);
+        memcpy(newRawBuffer, this.buffer, this.size);
+        newRawBuffer[this.size] = chr;
+        return String(newRawBuffer, newBufferSize, true);
+    }
+
+    # note, not binary safe
+    String oper +(byteptr rhs) {
+        uint rhs_size = strlen(rhs);
+        uint newBufferSize = size + rhs_size;
+        byteptr newRawBuffer = malloc(newBufferSize);
+        memcpy(newRawBuffer, buffer, size);
+        memcpy(newRawBuffer + size, rhs, rhs_size);
+        return String(newRawBuffer, newBufferSize, true);
+    }
+    
+    String oper *(uint times){
+        String newString;
+        
+        if (size == 1)
+            newString = String(times, buffer[0]);
+        else {
+            newString = String(malloc(size * times), size * times, true);
+            byteptr ptr = newString.buffer;
+            for (uint i = 0; i < times; i++){
+                memcpy(ptr, buffer, size);
+                ptr +=size;
+            }
+        }
+
+        return newString;
+    }
+
+    ## Create a substring.  This function is smart enough to know if the
+    ## receiver is already a SubString, in which case it will translate to
+    ## the underlying String to avoid creating a stack of SubStrings.
+    ## If 'pos' is negative, it is an offset from the end of the string.
+    SubString substr(int pos, uint len) @substr2 this
+
+    ## Create a substring from 'pos' to the end of the string.
+    SubString substr(int pos) @substr1 this
+
+    ## Slice is similar to substr, except that it accepts a start and end
+    ## position (instead of a start position and length).  Both the start
+    ## and end positions can be negative, indicating that they are relative
+    ## to the end of the string.
+    SubString slice(int start, int end) @slice2 this
+
+    # Another variation on slice(), this gives a slice from 'start' to the
+    # end of the string.
+    SubString slice(int start) @slice1 this
+
+    ## Remove trailing newline from the end of the string
+    String rtrim() { return rtrim(this); }
+
+    void formatTo(Formatter f) {
+        f.write(this);
+    }
+
+    ## If the string begins with 'prefix', returns the remainder of the string 
+    ## after 'prefix'.
+    @final SubString getSuffix(String prefix) {
+        if (startsWith(prefix))
+            return slice(prefix.size);
+        else
+            return null;
+    }
+};
+
+## Returns a legal source representation of the string.
+String _getRepr(Buffer buffer) {
+    AppendBuffer buf = {buffer.size + 2};
+
+    buf.append(b"'");
+    for (uint i = 0; i < buffer.size; ++i) {
+        ch := buffer.buffer[i];
+        if (ch < 32 || ch > 127 || ch == 39 || ch == 92) {
+            buf.append(b'\\'); # '\'
+            buf.append(b'0' + (ch >> 6));
+            buf.append(b'0' + ((ch & 56) >> 3));
+            buf.append(b'0' + (ch & 7));
+        } else {
+            buf.append(ch)
+        }
+    }
+    buf.append(b"'");
+
+    return String(buf, true);
+}
+
+## A substring of an existing string object.  Substrings are much
+## lighter weight than full String objects because SubString doesn't manage
+## its own buffer.  It references the buffer of its underlying String.
+class SubString : String {
+    String _rep = null;
+
+    ## Create a stubstring 'target' starting from 'pos' and of length 'len'.
+    oper init(String target, uint pos, uint len) :
+        String(target.buffer + pos, len, true),
+        _rep = target {
+    }
+
+    ## Create a substring from 'pos' to the end of the string.
+    oper init(String target, uint pos) :
+        String(target.buffer + pos, target.size - pos, true),
+        _rep = target {
+    }
+
+    oper init(String target, byteptr buf, uint len) :
+        String(buf, len, true),
+        _rep = target {
+    }
+
+    # duplicate the substring/slice interface since we can do them more
+    # efficiently here
+
+    SubString substr(int pos, uint len) @substr2 this
+    SubString substr(int pos) @substr1 this
+    SubString slice(int start, int end) @slice2 this
+    SubString slice(int start) @slice1 this
+
+    void _freeBuffer() {}
+}
+
+SubString _substr(SubString target, uint pos, uint len) {
+    # do bounds checking
+    if (pos > target.size || pos + len > target.size)
+        _throwIndexError('Substring out of bounds');
+
+    byteptr buf = target.buffer + uint(pos);
+    return SubString(target._rep, buf, len);
+}
+
+SubString substr(SubString target, int pos, uint len) @substr2 target
+SubString substr(SubString target, int pos) @substr1 target
+SubString slice(SubString target, int start, int end) @slice2 target
+SubString slice(SubString target, int start) @slice1 target
+
+SubString _substr(String target, uint pos, uint len) {
+    # do bounds checking
+    if (pos > target.size || pos + len > target.size)
+        _throwIndexError('Substring out of bounds');
+
+    byteptr buf = target.buffer + pos;
+    if (target.isa(SubString))
+        return SubString(SubString.cast(target)._rep, buf, len);
+    else
+        return SubString(target, buf, len);
+}
+
+SubString substr(String target, int pos, uint len) {
+    # adjust a negative position
+    if (pos < 0)
+        pos = int(target.size) - pos;
+
+    return _substr(target, uint(pos), len);
+}
+
+SubString substr(String target, int pos) {
+    # adjust a negative position
+    if (pos < 0)
+        pos = int(target.size) - pos;
+
+    return _substr(target, uint(pos), target.size - uint(pos));
+}
+
+SubString slice(String target, int start, int end) {
+
+    # adjust negative offsets
+    if (start < 0)
+        start = int(target.size) + start;
+    if (end < 0)
+        end = int(target.size) + end;
+
+    # bounds checking
+    if (end < start)
+        _throwIndexError('Start of slice is after end.');
+
+    return _substr(target, uint(start), uint(end - start));
+}
+
+SubString slice(String target, int start) {
+
+    # adjust negative offsets
+    if (start < 0)
+        start = int(target.size) + start;
+
+    # bounds checking
+    if (uint(start) > target.size)
+        _throwIndexError('Start of slice is after end.');
+
+    return _substr(target, uint(start), target.size - uint(start));
+}
+
+String rtrim(String target) {
+
+    if (!target) return target;
+    intz cur = target.size - 1;
+    while (cur > -1 && ((ch := target.buffer[cur]) == b' ' ||
+                        ch == b'\t' ||
+                        ch == b'\r' ||
+                        ch == b'\n'
+                        )
+           )
+        --cur;
+    return target.slice(0, cur + 1);
+}
+
+## A string that is guaranteed to be null terminated. The trailing null is
+## not included in the size of the string.
+class CString : String {
+
+    @final void __copy(byteptr buf, uint newSize) {
+        size = newSize;
+        buffer = malloc(size + 1);
+        memcpy(buffer, buf, size);
+        buffer[size] = 0;
+    }
+
+    oper init(Buffer buf) {
+        __copy(buf.buffer, buf.size);
+    }
+
+    ## Initialize a the string from byteptr and size, take ownership of the
+    ## memory if requested.
+    ## If takeOwnership is true, buf[size] must be null.  This constructor
+    ## will not verify that this is the case.
+    oper init(byteptr buf, uint size, bool takeOwnership) :
+        String(buf, size, true) {
+        if (!takeOwnership)
+            __copy(buf, size);
+    }
+
+    ## Initialize from a null-terminated byteptr, take ownership of the
+    ## memory if requested.
+    oper init(byteptr buf, bool takeOwnership) :
+        String(buf, strlen(buf) + 1, takeOwnership) {
+        --size;
+    }
+
+    ## Initialize from a ManagedBuffer and optionally take ownership of the
+    ## buffer.  Note that this is subtly different from the corresponding 
+    ## String constructor as "size" will be the number of bytes in the buffer 
+    ## before the first null, and not the total size of the buffer.
+    oper init(ManagedBuffer buf, bool takeOwnership) :
+        String(buf, strlen(buf.buffer), takeOwnership) {
+    }
+
+    CString toCString() {
+        return this;
+    }
+}
+
+CString _makeCString(Buffer val) {
+    return CString(val);
+}
+
+## This class is used to represent static strings parsed out of the language 
+## source code (after bootstrapping).  You can safely use it to wrap raw byte 
+## arrays as long as:
+## 1) the arrays have a null character either within them or immediately 
+##    following them (i.e. they are null terminated)
+## 2) they are guaranteed to stay in existence and remain unchanged for the 
+##    life of the StaticString object.
+class StaticString : CString {
+
+    oper init(byteptr data, uint size) : CString(data, size, true) {}
+
+    ## Initialize from a null terminated string.
+    oper init(byteptr data) : CString(data, strlen(data), true) {}
+
+    # override _freeBuffer so we don't...
+    void _freeBuffer() {}
+}
+
+class StackFrame : Object {
+    String func, file;
+    uint lineNumber;
+    
+    oper init(String func, String file, uint lineNumber) :
+        func = func,
+        file = file,
+        lineNumber = lineNumber {
+    }
+}
+
+## Base exception class.
+## Note that rethrowing an exception inside another is not yet supported.
+class Exception : Object {
+    String text;
+    array[StackFrame] __stackTrace = array[StackFrame](16);
+    uint __stackTraceSize = 0, __stackTraceCap = 16;
+
+    oper init(String text) : text = text {}
+    oper init() {}
+    
+    oper del() {
+        for (int i; i < __stackTraceSize; ++i)
+            __stackTrace[i].oper release();
+        free(__stackTrace);
+    }
+    
+    void append(StackFrame frame) {
+        if (__stackTraceSize == __stackTraceCap) {
+            
+            # out of room, reallocate.
+            __stackTraceCap *= 2;
+            temp := array[StackFrame](__stackTraceCap);
+            
+            # move everything to the new array
+            for (int i; i < __stackTraceSize; ++i)
+                temp[i] = __stackTrace[i];
+            free(__stackTrace);
+            __stackTrace = temp;
+        }
+        
+        __stackTrace[__stackTraceSize++] = frame;
+        frame.oper bind();
+    }
+
+    void _writeTo(Writer out) {
+        for (int i = int(__stackTraceSize - 1); i >= 0; --i) {
+            out.write(__stackTrace[i].func);
+            out.write(StaticString('\n'));
+        }
+        out.write(StaticString(this.class.name));
+        if (text) {
+            out.write(StaticString(': '));
+            out.write(text);
+        }
+        out.write(StaticString('\n'));
+    }
+
+    void writeTo(Writer out) {
+        _writeTo(out);
+    }
+
+    void formatTo(Formatter fmt){
+        _writeTo(fmt);
+    }
+}
+
+## Thrown when you attempt to cast an object to a type that it is not an 
+## instance of.
+class BadCastError : Exception {
+    oper init(String text) : Exception(text) {}
+}
+
+bool exceptionMatchFunc(Class classObj, Object obj) {
+    # if the class object is null, this is a "catch all" exception.  Otherwise 
+    # see if the exception object is an instance of the class.
+    return classObj is null || obj.isa(classObj);
+}
+
+void badClassFunc(Class curType, Class newType) {
+    throw BadCastError(String('Unable to cast object of type ') + 
+                        curType.name + 
+                        ' to ' + newType.name
+                       );
+}
+
+void exceptionReleaseFunc(Object ex) {
+    ex.oper release();
+}
+
+void exceptionFrameFunc(Object ex, voidptr last_ip) {
+    if (ex.isa(Exception)) {
+        e := Exception.cast(ex);
+        
+        info := array[byteptr](3);
+        getLocation(last_ip, info);
+        
+        e.append(StackFrame(StaticString(info[0]), StaticString(info[1]), 
+                            uintz(info[2])
+                            )
+                 );
+    }
+}
+
+## gets called at the toplevel exception handler when an exception is not 
+## caught
+void uncaughtExceptionHandler(Object ex) {
+    
+    # this can run after cleanups, so we can't use cerr here...
+    class StdErr : Object, Writer {
+        void write(Buffer buf) { write(2, buf.buffer, buf.size); }
+        void write(byteptr string) { write(2, string, strlen(string)); }
+        Object oper from Writer() { return this; }
+    }
+
+    writer := StdErr();
+
+    writer.write('Uncaught Exception:\n');
+    if (ex.isa(Exception)) {
+        Exception.cast(ex).writeTo(writer);
+    } else {
+        writer.write('  ');
+        writer.write(StaticString(ex.class.name));
+        writer.write('\n');
+    }
+}
+
+registerHook(EXCEPTION_MATCH_FUNC, exceptionMatchFunc);
+registerHook(BAD_CAST_FUNC, badClassFunc);
+registerHook(EXCEPTION_RELEASE_FUNC, exceptionReleaseFunc);
+registerHook(EXCEPTION_FRAME_FUNC, exceptionFrameFunc);
+registerHook(EXCEPTION_UNCAUGHT_FUNC, uncaughtExceptionHandler);
+
+# other standard exceptions
+
+@define except 1
+    class $1 : Exception {
+        oper init(String text) : Exception(text) {}
+        oper init() {}
+    }
+$$
+
+## Raised on an assertion failure.
+@except AssertionError
+
+void _throwAssertionError(byteptr text) {
+    throw AssertionError(StaticString(text));
+}
+
+## Raise when a caller references an out of bound index.
+@except IndexError
+
+void _throwIndexError(byteptr text) {
+    throw IndexError(StaticString(text));
+}
+
+## Raised when code attempts to use a resource that doesn't exist or is 
+## inappropriate for the use.
+@except InvalidResourceError
+
+## Raised when an operation is performed on an object that is not in a state 
+## appropriate for that operation (like reading from a closed file).
+@except InvalidStateError
+
+## Raised when a user specifies an invalid argument to a function.
+@except InvalidArgumentError
+
+## Raised when an invalid key is passed to a function in a key-value interface.
+@except KeyError
+
+## This gets thrown when there was an operating system error that doesn't
+## cleanly map to a Crack exception.  Try to reserve throwing this for that
+## case, because processing this error will be platform dependent.
+class SystemError : Exception {
+    int __errno;
+
+    String __makeMessage(String context) {
+        AppendBuffer buf = {context.size + 40};
+        buf.extend(context);
+        buf.extend(': ', 2);
+        byteptr error = c_strerror();
+        buf.extend(error, strlen(error));
+        return String(buf, true);
+    }
+
+    oper init(String context, int _errno) :
+        Exception(__makeMessage(context)),
+        __errno = _errno {
+    }
+    
+    oper init(String context) :
+        Exception(__makeMessage(context)),
+        __errno = errno() {
+    }
+
+}
+
+# misc functions
+
+void print(String val) {
+    puts(val.buffer);
+}
+
+void print(StaticString val) {
+    puts(val.buffer);
+}
+
+void puts(StaticString val) {
+    puts(val.buffer);
+}
+
+void print(CString val) {
+    puts(val.buffer);
+}
+
+void die(String message) {
+    print(message);
+    abort();
+}
+
+void die() {
+    abort();
+}
+
+# comparison functions (helpful for generics)
+int cmp(Object a, Object b) {
+    if (a is b)
+        return 0;
+    else if (!(a is null))
+        return a.cmp(b);
+    else if (!(b is null))
+        return -1;
+    else
+        return 1;
+}
+
+int cmp(voidptr a, voidptr b) {
+    if (uintz(a) == uintz(b)) return 0;
+    else return uintz(a) > uintz(b) ? 1 : -1;
+}
+
+@define lightcmp 1 int cmp($1 a, $1 b) { return a - b; } $$
+@define heavycmp 1 int cmp($1 a, $1 b) {
+    if (a > b)
+        return 1;
+    else if (a < b)
+        return -1;
+    else
+        return 0;
+}
+
+$$
+
+int cmp(bool a, bool b) { 
+    if ((a && b) || (!a && !b)) return 0;
+    return 1;
+}
+
+@lightcmp byte
+@lightcmp int16
+@lightcmp int32
+@heavycmp uint16
+@heavycmp uint32
+@heavycmp int64
+@heavycmp uint64
+@heavycmp float32
+@heavycmp float64
+
+# define PDNTs last, anything can convert to them (this shouldn't matter if 
+# all other types are defined)
+@lightcmp int
+@heavycmp uint
+@heavycmp intz
+@heavycmp uintz
+@heavycmp float
+
+# hash functions (helpful for generics)
+# we don't define float hashes yet because there is no cheap way to implement 
+# them in Crack and they're not very useful anyway.
+uint makeHashVal(Object obj) { return obj.makeHashVal(); }
+
+@define lighthash 1 uint makeHashVal($1 val) {
+    return uint(val);
+}
+$$
+
+@lighthash byte
+@lighthash int16
+@lighthash uint16
+@lighthash int32
+@lighthash uint32
+
+# all other PDNT types should convert to this
+@lighthash uint
+
+uint makeHashVal(uint64 val) { return uint(val >> 32 ^ val); }
+uint makeHashVal(int64 val) { return uint(val >> 32 ^ val); }

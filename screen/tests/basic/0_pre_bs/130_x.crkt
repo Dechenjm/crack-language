@@ -1,0 +1,10 @@
+%%TEST%%
+recursive imports give an error
+%%ARGS%%
+
+%%FILE%%
+import test.recursive_import;
+%%EXPECT%%
+ParseError: %SOURCEDIR%test/recursive_import.crk:8:29: Attempting to import module test.recursive_import recursively.
+%%STDIN%%
+

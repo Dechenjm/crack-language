@@ -1,0 +1,861 @@
+# Copyright 2011-2012 Google Inc.
+# Copyright 2011-2012 Shannon Weyrick <weyrick@mozek.us>
+# Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# Generic hash map implementation
+
+import crack.lang makeHashVal, free, AssertionError, KeyError, Formatter,
+                  InvalidArgumentError, IndexError;
+import crack.io cout, StandardFormatter, FStr, Writer;
+import crack.math log2, abs;
+
+# optimal bucket count sizes (these are prime numbers and guaranteed to be 
+# relatively prime to all hash values, reducing the number of collisions and 
+# substantially improving performance)
+const array[uint] _BUCKET_COUNT = [
+    17, 37, 67, 131, 257, 521, 1031, 2053, 4099, 8209, 16411, 32771, 65537, 
+    131101, 262147, 524309, 1048583, 2097169, 4194319, 8388617, 16777259, 
+    33554467, 67108879, 134217757, 268435459, 536870923, 1073741827, 
+    2147483659, 0
+];
+
+uint _increaseCap(uint cap) {
+    # find the next bucket count greater than twice the current one.
+    uint bc;
+    for (int i = 0; (bc = _BUCKET_COUNT[i]) && bc < cap * 2; ++i);
+    if (!bc)
+        throw AssertionError('Hashtable too big!!');
+    
+    return bc;
+}
+
+## A map implementation based on a hashtable.
+class HashMap[Key, Value] {
+    class Item {
+        uint _hash;
+        Key key;
+        Value val;
+        
+        oper init(uint hash, Key key, Value val) :
+            _hash = hash,
+            key = key,
+            val = val {
+        }
+    }
+    
+    array[Item] _items;
+    uint _size, _cap;
+    
+    class Iter {
+        HashMap __map;
+        int __index = -1;
+
+        @final void next();
+        
+        oper init(HashMap map) : __map = map { next(); }
+        
+        @final Item elem() { return __map._items[__index]; }
+        
+        @final void next() {
+            while ((++__index < __map._cap) && 
+                   (!__map._items[__index]))
+                ;
+        }
+        
+        bool isTrue() { return __index < __map._cap; }
+    }
+
+    oper init() : _items(16), _cap = 16 {}
+    
+    @final
+    void _free(){
+        # release all items
+        for (int i = 0; i < _cap; ++i) {
+            _items[i].oper release();
+            _items[i] = null;
+        }
+        
+        # free the list
+        free(_items);
+    }
+    
+    @final
+    void clear(uint newcap) {
+        _free();
+        _items = array[Item](newcap);
+        _cap = newcap;
+        _size = 0;
+    }
+    
+    @final
+    void clear() {
+        clear(16);
+    }
+    
+    oper del() {
+        _free();
+    }
+    
+    @final int __findSlot(uint hash, Key key) {
+        
+        # find the ideal slot
+        i := hash % _cap;
+        
+        # if it's occupied by something with a different key, increment to 
+        # the next slot.
+        while (_items[i] && _items[i].key != key) {
+#            cout `desired slot $i for $key is occupied,`;
+            i = (i + 1) % _cap;
+#            cout `checking slot $i\n`;
+        }
+#        cout `assigning $key to $i\n`;
+        
+        return int(i);
+    }
+    
+    @final void __reallocate() {
+        
+        # stash the old array, create a new array with double the capacity.
+        oldCap := _cap;
+        _cap = _increaseCap(_cap);
+        array[Item] oldItems = _items;
+        _items = array[Item](_cap);
+        
+        # move everything over to the new array.
+        for (uint i = 0; i < oldCap; ++i) {
+            item := oldItems[i];
+            if (item)
+                _items[__findSlot(item._hash, item.key)] = item;
+        }
+        
+        # free the old list
+        free(oldItems);
+    }
+    
+    Value set(Key key, Value val) {
+#        cout `*** map[$key] = $val\n`;
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        if (_items[i]) {
+            # slot is occupied, simply replace the value
+#            cout `replacing $key at $i with $val\n`;
+            _items[i].val = val;
+        } else {
+            # see if we've exceeded capacity
+            if (_size > 3 * _cap / 4) {
+#                cout `reallocating\n`;
+                __reallocate();
+                i = __findSlot(hash, key);
+            }
+            
+            item := Item(hash, key, val);
+#            cout `storing key $key at $i with $val\n`;
+            _items[i] = item;
+            item.oper bind();
+            ++_size;
+        }
+        
+        return val;
+    }
+
+    Value oper []=(Key key, Value val) {
+        return set(key, val);
+    }
+
+    ## Returns true if the key exists
+    bool hasKey(Key key) {
+        if (!_size) return false; // structure is empty
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        return _items[i];
+    }
+
+    ## Returns the value associated with the specified key, throws KeyError if 
+    ## the key is not in the container.
+    Value oper [](Key key) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        if (_items[i])
+            return _items[i].val;
+        else
+            throw KeyError(FStr() `Unknown key: $key`);
+    }
+
+    ## Returns the value associated with the specified key, null if the key is 
+    ## not in the container.
+    Value get(Key key) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        return _items[i] ? _items[i].val : null;
+    }
+    
+    ## Returns the value associated with the key, 'default' if the key is not 
+    ## in the container.
+    Value get(Key key, Value default) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        return _items[i] ? _items[i].val : default;
+    }
+    
+    void __findNewOccupant(int opening) {
+        
+        # check if a < b <= c, respecting the modulus operation.
+        bool inOrder(int a, int b, int c) {
+            return 
+                # if a < c, this is trivial
+                a < c && a < b && b <= c ||
+                
+                # if a > c, the range is split between a..top of range and
+                # bottom of range .. c
+                   a > c && (b > a || b <= c);
+        }
+        
+        # scan through the continguous following items to see if there are any 
+        # that don't belong where they are and would be better served by the 
+        # newly opened position.  
+        # make this determination with a simple '<=' check)
+        i := int((opening + 1) % _cap);
+        
+        # find the last open slot
+        last := opening ? opening - 1 : int(_cap - 1);
+        while (_items[last])
+            if (--last < 0) last = int(_cap + last);
+        
+        while (_items[i]) {
+            desired := int(_items[i]._hash % _cap);
+#            cout `does $(_items[i].key) at $i which wants to be at \
+# $desired belong at $opening (last = $last)?\n`;
+            if (inOrder(last, desired, opening)) {
+                # found one!
+#                cout `moving $(_items[i].key) to $opening\n`;
+                _items[opening] = _items[i];
+                _items[i] = null;
+                
+                # repeat with the newly vacated opening
+                opening = i;
+            }
+            i = int((i + 1) % _cap);
+        }
+    }
+    
+    void delete(Key key) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        if (_items[i]) {
+#            cout `deleting item $key at $i\n`;
+            _items[i].oper release();
+            _items[i] = null;
+            --_size;
+            __findNewOccupant(i);
+        } else {
+            throw KeyError(FStr() `Unknown key: $key`);
+        }
+    }
+
+    Iter iter() { return Iter(this); }
+
+    void formatTo(Formatter fmt) {
+        fmt `[`;
+        bool first = true;
+        for (item :in this){
+            if (!first) fmt `, `;
+            else first = false;
+            fmt `$(item.key): $(item.val)`;
+        }
+        fmt `]`;
+    }
+
+    uint count() {
+        return _size;
+    }
+
+    ## A HashMap is true if it has elements.
+    bool isTrue() { return _size; }
+    
+    ## Method for testing - verify that all constraints are satisfied.
+    void checkConstraints() {
+        for (int i = 0; i < _cap; ++i) {
+            if (_items[i]) {
+                expected := _items[i]._hash % _cap;
+                if (expected != i) {
+                    # make sure there are no empty slots between here and the
+                    # expected index
+                    int j = i;
+                    while (true) {
+                        if (!_items[j])
+                            throw AssertionError(FStr() `Empty slot at $j \
+between actual position of $(_items[i].key) at $i and expected position at \
+$expected`);
+                        if (j == expected)
+                            break;
+                        --j;
+                        if (j < 0)
+                            j = int(_cap + j);
+                    }
+                }
+            }
+        }
+    }
+}
+
+## An ordered hash map is a combination of a hash-map and a sequence.  The 
+## container supports positional insertion of key-value pairs.  Iteration 
+## traverses the elements according to the positions they were inserted at.
+class OrderedHashMap[Key, Value] {
+
+    uint _size, _cap;
+
+    class Item {
+        uint _hash;
+        Key key;
+        Value val;
+        Item prev, next;
+        
+        oper init(uint hash, Key key, Value val, Item prev) :
+            _hash = hash,
+            key = key,
+            val = val,
+            prev = prev {
+        }
+
+        void formatTo(Formatter fmt){
+            fmt `$key: $val`;
+        }
+
+        void formatToDebug(Formatter fmt){
+            fmt `$prev <- $key: $val -> $next\n`;
+        }
+
+    }
+    array[Item] _items;
+    Item head, tail;
+
+    class Iter {
+        Item _item;
+        bool __first;
+        oper init(Item item0) : _item = item0, __first = true { }
+        oper init(OrderedHashMap map) : _item = map.head, __first = true {}
+
+        Item elem() {
+            if (_item)
+                return _item;
+            else
+                return null;
+        }
+
+        bool next() {
+            if (!_item)
+                return false;
+            
+            _item = _item.next;
+            return _item;
+        }
+    
+        bool nx() {
+            if (!_item)
+                return false;
+            
+            if (__first)
+                __first = false;
+            else
+                _item = _item.next;
+            return _item;
+        }
+        
+        bool isTrue() { return _item; }
+
+        ## The opposite of next(): Back-up the iterator to the last node, 
+        ## return true if it's valid.
+        bool prev() { _item = _item.prev; return _item; }
+    }
+
+    ## Returns an iterator.
+    ## if 'back' is true, initialize it to point to the last node on the 
+    ## list. Otherwise point it to the first node.
+    Iter iter(bool back) {
+        if (back)
+            return Iter(tail);
+        else
+            return Iter(head);
+    }
+
+    Iter iter(Item item){
+            return Iter(head);
+    }
+
+    Iter iter() {
+        return Iter(head);
+    }
+
+
+    oper init() : _items(16), _cap = 16 {}
+    
+    @final
+    void _free(){
+        # release all items
+        for (int i = 0; i < _size; ++i) {
+            if (_items[i]) {
+                # break reference cycles, release the object
+                _items[i].prev = null;
+                _items[i].oper release();
+            }
+        }
+
+        # release head & tail references
+        head = null;
+        tail = null;
+        
+        # free the list
+        free(_items);
+    }
+    
+    ## Delete all of the contents of the map, converting the map to an empty 
+    ## map with the specified capacity.
+    @final void clear(uint newcap) {
+        # free everything and reallocate
+        _free();
+        _items = array[Item](newcap);
+        _cap = newcap;
+        _size = 0;
+    }
+    
+    ## Delete all of the contents of the map, converting the map to an empty 
+    ## map with the default capacity.
+    @final void clear() {
+        clear(16);
+    }
+    
+    oper del() {
+        _free();
+    }
+    
+    @final int __findSlot(uint hash, Key key) {
+        
+        # find the ideal slot
+        i := hash % _cap;
+        
+        # if it's occupied by something with a different key, increment to 
+        # the next slot.
+        while (_items[i] && _items[i].key != key) {
+            i = (i + 1) % _cap;
+        }
+        
+        return int(i);
+    }
+    
+    @final void __reallocate() {
+        
+        # stash the old array, create a new array with over twice the capacity.
+        oldCap := _cap;
+        _cap = _increaseCap(_cap);
+        array[Item] oldItems = _items;
+        _items = array[Item](_cap);
+        
+        # move everything over to the new array.
+        for (uint i = 0; i < oldCap; ++i) {
+            item := oldItems[i];
+            if (item)
+                _items[__findSlot(item._hash, item.key)] = item;
+        }
+        
+        # free the old list
+        free(oldItems);
+    }
+
+    Value _setItemNew(int slot, Item item) {
+        # see if we've exceeded capacity
+        if (_size > 3 * _cap / 4) {
+            __reallocate();
+            slot = __findSlot(item._hash, item.key);
+        }
+
+        _items[slot] = item;
+        item.oper bind();
+        ++_size;
+        return item.val;
+    }
+
+    ## Add a new key value pair to the map at the end of the sequence.
+    Value append(Key key, Value value) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        temp := _items[i];
+        if (temp is null) {
+            if (tail) {
+                temp = Item(hash, key, value, tail);
+                tail.next = temp;
+                tail = temp;
+            } else {
+                temp = head = tail = Item(hash, key, value, null);
+            }
+            _setItemNew(i, temp);
+        } else {
+            temp.val = value;
+        }
+        return value;
+    }
+
+    Value set(Key key, Value value) {
+        return append(key, value);
+    }
+
+    Value oper []=(Key key, Value val) {
+        return append(key, val);
+    }
+
+    ## Returns true if the key exists
+    bool hasKey(Key key) {
+        if (!_size) return false; // structure is empty
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        return _items[i];
+    }
+
+    ## Returns the value associated with the specified key, throws KeyError if 
+    ## the key is not in the container.
+    Value oper [](Key key) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        if (_items[i])
+            return _items[i].val;
+        else
+            throw KeyError(FStr() `Unknown key: $key`);
+    }
+
+    ## Returns the item associated with the specified key, null if the key is 
+    ## not in the container.
+    Item getItem(Key key) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        return _items[i] ? _items[i] : null;
+    }
+
+    ## Returns the value associated with the specified key, null if the key is 
+    ## not in the container.
+    Value get(Key key) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        return _items[i] ? _items[i].val : null;
+    }
+    
+    ## Returns the value associated with the key, 'default' if the key is not 
+    ## in the container.
+    Value get(Key key, Value default) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        return _items[i] ? _items[i].val : default;
+    }
+
+    void __findNewOccupant(int opening) {
+        
+        # check if a < b <= c, respecting the modulus operation.
+        bool inOrder(int a, int b, int c) {
+            return 
+                # if a < c, this is trivial
+                a < c && a < b && b <= c ||
+                
+                # if a > c, the range is split between a..top of range and
+                # bottom of range .. c
+                   a > c && (b > a || b <= c);
+        }
+        
+        # scan through the continguous following items to see if there are any 
+        # that don't belong where they are and would be better served by the 
+        # newly opened position.  
+        # make this determination with a simple '<=' check)
+        i := int((opening + 1) % _cap);
+        
+        # find the last open slot
+        last := opening ? opening - 1 : int(_cap - 1);
+        while (_items[last])
+            if (--last < 0) last = int(_cap + last);
+        
+        while (_items[i]) {
+            desired := int(_items[i]._hash % _cap);
+            if (inOrder(last, desired, opening)) {
+                # found one!
+                _items[opening] = _items[i];
+                _items[i] = null;
+                
+                # repeat with the newly vacated opening
+                opening = i;
+            }
+            i = int((i + 1) % _cap);
+        }
+    }
+    
+    void _deleteHash(Key key) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        if (_items[i]) {
+            _items[i].oper release();
+            _items[i] = null;
+            --_size;
+            __findNewOccupant(i);
+        } else {
+            throw KeyError(FStr() `Unknown key: $key`);
+        }
+    }
+
+    Value pushHead(Key key, Value value) {
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        temp := _items[i];
+        if (temp is null) {
+            temp = Item(hash, key, value, null);
+            if (head) {
+                temp.next = head;
+                head.prev = temp;
+                head = temp;
+            } else {
+                head = tail = temp;
+            }
+            _setItemNew(i, temp);
+        } else if (temp.prev is null) {
+            temp.val = value;
+        } else {
+            throw KeyError(FStr() I`Key $key already assigned in a position \
+                                    not at the head`);
+        }
+        return value;
+    }
+
+    void pushTail(Key key, Value value) {
+        append(key, value);
+    }
+
+    Item popHead() {
+        if (!head) 
+            throw InvalidArgumentError('Attempting to pop from an empty list');
+        item := head;
+        if (head is tail)
+            head = tail = null;
+        else
+            head = head.next;
+
+        if (head)
+            head.prev = null;
+
+        _deleteHash(item.key);
+        return item;
+    }
+    
+    ## Remove the element from the back of the list and return it.
+    Item popTail() {
+        if (!tail)
+            throw InvalidArgumentError('Attempting to pop from an empty list');
+        item := tail;
+        tail = item.prev;
+        if (tail)
+            tail.next = null;
+        else
+            head = null;
+        _deleteHash(item.key);
+        return item;
+    }
+
+    Item pop() {
+        return popTail();
+    }
+
+    Item __findItem(uint index) {
+        if (index >= _size)
+            throw IndexError('List index out of range in delete()');
+        i := index;
+        item := head;
+        while (i && item) {
+            item = item.next;
+            i = i - 1;
+        }
+        if (!item) throw AssertionError('List is shorter than its count.');
+        return item;
+    }
+
+    Item getItemAt(uint index) {
+        if (index > _size)
+            throw IndexError('List index out of range in []');
+        item := __findItem(index);
+        return item;
+    }
+
+    void insert(uint index, Key key, Value value) {
+        # special-case inserting at the beginning
+        if (!index) {
+            pushHead(key, value);
+            return;
+        }
+
+        # find the item that's going to be before the new item
+        if (index > _size)
+            throw IndexError('Index out of range in insert()');
+        item := __findItem(index - 1);
+
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+        temp := _items[i];
+
+        # The same key is already at the same index
+        if (item != null && item.next is temp) { 
+            temp.val = value;
+            return;
+        }
+
+        # create a new item and append it to the item we found
+        Item newItem;
+        if (temp is null)
+            newItem = Item(hash, key, value, item);
+         else
+            throw IndexError(FStr() `Key $key already exists at a different index`);
+
+        newItem.next = item.next;
+        if (item.next)
+            item.next.prev = newItem;
+        item.next = newItem;
+        
+        # see if we need to fix the tail
+        if (item is tail)
+            tail = newItem;
+
+        # Also add the item to the hash table
+        _setItemNew(i, newItem);
+    }
+
+    void deleteKey(Key key){
+        hash := makeHashVal(key);
+        i := __findSlot(hash, key);
+
+        if (_items[i]) {
+            item := _items[i];
+
+            # Handle the head and tail
+            if (item is tail){
+                popTail();
+                return;
+            }
+            else if (item is head){
+                popHead();
+                return;
+            }
+
+            item.prev.next = item.next;
+            item.next.prev = item.prev;
+
+            _deleteHash(item.key);
+
+        } else {
+            throw KeyError(FStr() `Invalid key: $key`);
+        }
+    }
+
+    void delete(uint index) {
+        if (index > 0) {
+            # find the item before it.
+            if (index > _size)
+                throw IndexError('Index out of range in delete()');
+            item := __findItem(index - 1);
+
+            # if the next item is the tail, reset the tail.
+            if (item.next is tail)
+                tail = item;
+            found := item.next;
+
+            # drop the current next item.
+            tmp := item.next.next;
+            item.next = tmp;
+            if (tmp)
+                tmp.prev = item;
+            _deleteHash(found.key);
+
+        # first item is special and easy
+        } else if (!head) {
+            throw IndexError('Index out of range in delete()');
+        } else {
+            popHead();
+        }
+    }
+
+    void formatTo(Formatter fmt) {
+        fmt `[`;
+        bool first = true;
+         for (itm :in this){
+            if (!first) fmt `, `;
+            else first = false;
+            fmt.format(itm);
+        }
+        fmt `]`;
+    }
+
+    void formatToDebug(Formatter fmt) {
+        fmt `[`;
+        bool first = true;
+         for (itm :in this) {
+            if (!first) fmt `, `;
+            else first = false;
+            itm.formatToDebug(fmt);
+        }
+        fmt `]`;
+    }
+
+    uint count() {
+        return _size;
+    }
+
+    uint cap(){
+        return _cap;
+    }
+
+    ## A HashMap is true if it has elements.
+    bool isTrue() { return _size; }
+    
+    ## Method for testing - verify that all constraints are satisfied.
+    void checkConstraints() {
+        for (int i = 0; i < _cap; ++i) {
+            if (_items[i]) {
+                expected := _items[i]._hash % _cap;
+                if (expected != i) {
+                    # make sure there are no empty slots between here and the
+                    # expected index
+                    int j = i;
+                    while (true) {
+                        if (!_items[j])
+                            throw AssertionError(FStr() `Empty slot at $j \
+between actual position of $(_items[i].key) at $i and expected position at \
+$expected`);
+                        if (j == expected)
+                            break;
+                        --j;
+                        if (j < 0)
+                            j = int(_cap + j);
+                    }
+                }
+            }
+        }
+        
+        # check the linked list.
+        if (cur := head) {
+            if (cur.prev)
+                throw AssertionError('head has a prev');
+            Item last;
+            while (cur) {
+                if (!(cur.prev is last))
+                    throw AssertionError('Previous is not the last element');
+                
+                index := __findSlot(cur._hash, cur.key);
+                if (!(_items[index] is cur))
+                    throw AssertionError('Item is not in its slot');
+                
+                last = cur;
+                cur = cur.next;
+            }
+            
+            if (last != tail)
+                throw AssertionError('last != tail');
+        } else if (tail) {
+            throw AssertionError('Got tail but no head!');
+        }
+    }
+}

@@ -1,0 +1,9 @@
+%%TEST%%
+Second order shlib imports
+%%ARGS%%
+%%FILE%%
+import test.testmod_shlib cecho;
+puts(cecho('ok'));
+%%EXPECT%%
+ok
+%%STDIN%%

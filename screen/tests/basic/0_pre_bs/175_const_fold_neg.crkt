@@ -1,0 +1,8 @@
+%%TEST%%
+const fold negate
+%%ARGS%%
+%%FILE%%
+byte b = -(1);
+%%EXPECT%%
+ParseError: %SCRIPTNAME%:1:10: Invalid type int for initializer for variable b of type byte.
+%%STDIN%%

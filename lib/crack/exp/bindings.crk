@@ -1,0 +1,33 @@
+// Copyright 2010-2011 Google Inc.
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+## tools for writing bindings to native APIs.
+
+import crack.lang die, FreeBase, free;
+
+class Opaque : VTableBase {
+    oper init() {
+        die('attempted to construct opaque class');
+    }
+    
+    oper to bool() { return !(this is null); }
+};
+
+class Wrapper : FreeBase {
+    oper release() { free(this); }
+};
+
+## Equivalent to "int *" in C code
+class IntWrapper : Wrapper {
+    int val;
+    oper init(int val) : val = val {}
+};
+
+## Equivalent to "char **" in C code.
+class ByteptrWrapper : Wrapper {
+    byteptr val;
+    oper init(byteptr val) : val = val {}
+};

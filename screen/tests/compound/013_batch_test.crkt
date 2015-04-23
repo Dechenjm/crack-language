@@ -1,0 +1,330 @@
+%%TEST%%
+Batch of persistence tests.
+%%ARGS%%
+%%FILE%%
+import crack.io FStr;
+import systest test;
+test.preBootstrap = true;
+
+# Test of alias persistence.
+test.mod('mod', I"
+    class A {
+        void f() { puts('alias'); }
+        alias g = f;
+        @static int h() { return 100; }
+        alias i = h;
+    }
+    ");
+test.main(I"
+    import mod A;
+    if (A.i() != 100) puts('FAILED static method alias serialization');
+    A().g();
+    ");
+test.run();
+
+test.main(I"
+    import mod A;
+    A().g(); # force recompile
+    ");
+test.run();
+
+# Test of inheritance from a slave module.
+test.main(I"
+    @abstract class A[T] : VTableBase {
+        @abstract T f();
+    }
+    class B : A[int] {
+        int f() { return 100; }
+    }
+    A[int] a = B();
+    if (a.f() != 100)
+        puts('FAILED specialization of abstract');
+    puts('ok');
+    ");
+test.run();
+test.run();
+
+# Test of nested classes in a slave module.
+test.main(I"
+    class A[T] {
+        class B {}
+        B f() { return null; }
+    }
+    class B : A[int] {}
+    puts('nested classes');
+    ");
+test.run();
+test.run();
+
+# Test of abstract generics.
+test.mod('mod', I"
+    @abstract class A[T] : VTableBase {
+        @abstract void f();
+    }
+    ");
+test.main(I"
+    import mod A;
+    class B : A[int] { void f() {} }
+    puts('abstract generics');
+    ");
+test.run();
+test.rmCacheFiles('mod.A');
+test.run();
+
+# Test that "cast()" is correctly reconstituted.
+test.mod('mod', 'class A : VTableBase {}');
+test.main("import mod A; A.cast(A()); puts('cast reconstituted')");
+test.run();
+test.rmCacheFiles('.main.*');
+test.run();
+
+# importing a generic instantiated in a slave.
+test.mod('mod', I"
+    class A[T] { void f() { puts(T.name); } }
+    class GenericInASlave {}
+    A[GenericInASlave] ab = {};
+    ");
+test.main(I"
+    import mod ab;
+    ab.f();
+    ");
+test.run();
+test.run();
+
+# Serialization of private member functions.
+test.mod('mod', I"
+    class A : VTableBase {
+        void __f() {}
+        void f() {}
+    }
+    ");
+String makeMain(int run) {
+    return FStr() I`
+        import mod A;
+        class B : A {}
+        puts('PrivateMember$run');
+        `;
+}
+test.main(makeMain(1));
+test.run();
+test.main(makeMain(2));
+test.run();
+
+# Serialization of aliases.
+test.mod('mod2', "void f() {}");
+test.mod('mod1', I"
+    import mod2 g = f;
+    class A[T] {}  # Forces unexported aliases to be serialized.
+    class B {
+        void f() {}
+        alias a = f;
+    }
+    ");
+test.main(I"
+    import mod1 A;
+    puts('alias serialization');
+    ");
+test.run();
+test.rmCacheFiles('.main.*');
+test.run();
+
+# Aliasing privates.
+test.mod('mod', I"
+    void _f() { puts('aliased privates'); }
+    alias f = _f;
+    class _C {}
+    alias C = _C;
+    int _i;
+    alias i = _i;
+    ");
+test.main(I"
+    import mod f, C, i;
+    C c;
+    f();
+    i = 1;
+    ");
+test.run();
+test.rmCacheFiles('.main.*');
+test.run();
+
+# Verifies that dependencies of hidden modules (copersistent ephemeral
+# modules defined in an inaccessible scope) are correctly propagated to the
+# outer module so that they can be loaded at runtime.
+test.mod('mod', I"
+    class G[T] {
+        void f() { puts('hidden module dependencies'); }
+    }
+    ");
+test.main(I"
+    import mod G;
+    void f() {
+        class H[T] : G[T] {}
+        H[int] h = {};
+        h.f();
+    }
+    f();
+    ");
+test.run();
+test.run();
+
+# Verify that we can move a generic instantiation into a module in which it
+# would become a slave.
+test.rmCacheFiles('.*');
+test.mod('mod1', "
+    import mod2 B;
+    class A {}
+    ");
+test.mod('mod2', "class B[T] {}");
+test.main(I"
+    import mod1 A;
+    import mod2 B;
+    B[A] a;
+    puts('enslaving generics');
+    ");
+test.run();
+
+test.mod('mod1', "
+    import mod2 B;
+    class A {}
+    B[A] a;
+    ");
+test.main(I"
+    import mod1 A;
+    import mod2 B;
+    puts('enslaving generics');
+    ");
+test.run();
+test.run();
+
+# Verify that cached generics have dependencies on the modules containing
+# their parameter types.
+test.rmCacheFiles('.*');
+test.mod('mod1', "
+    import mod2 B;
+    class A {
+        void f() {}
+    }
+    ");
+test.mod('mod2', I"
+         class B[T] {
+            void g() { T().f() }
+         }
+         ");
+test.main(I"
+    import mod1 A;
+    import mod2 B;
+    B[A] a;
+    puts('generic dependencies');
+    ");
+test.run();
+
+test.mod('mod1', "
+    import mod2 B;
+    class A {}
+    ");
+test.run();
+
+test.mod('mod1', "
+    class A[T] {}
+    alias AI = A[int];
+    ");
+test.main("import mod1 AI;");
+test.run();
+
+test.mod('mod1', "
+    class A : VTableBase {
+        void f() { puts('wtf? A?'); }
+    }
+
+    class B : A {
+        void f() { puts('aliased override'); }
+        alias g = f;
+    }
+    ");
+test.main("import mod1 B; B().g()");
+test.run();
+test.rmCacheFiles('.main.*');
+test.run();
+
+test.mod('mod1', "
+    class A {
+        void f() { puts('cached alias of base func'); }
+    }
+    ");
+test.mod('mod2', "
+    import mod1 A;
+    class B : A { alias g = f; }
+    ");
+test.main("
+    import mod2 B;
+    B().g();
+    ");
+test.run();
+test.rmCacheFiles('.main.*');
+test.run();
+
+%%REXPECT%%
+out: alias
+terminated: success
+out: alias
+terminated: success
+out: ok
+terminated: success
+out: ok
+terminated: success
+out: nested classes
+terminated: success
+out: nested classes
+terminated: success
+out: abstract generics
+terminated: success
+out: abstract generics
+terminated: success
+out: cast reconstituted
+terminated: success
+out: cast reconstituted
+terminated: success
+out: GenericInASlave
+terminated: success
+out: GenericInASlave
+terminated: success
+out: PrivateMember1
+terminated: success
+out: PrivateMember2
+terminated: success
+out: alias serialization
+terminated: success
+out: alias serialization
+terminated: success
+out: aliased privates
+terminated: success
+out: aliased privates
+terminated: success
+out: hidden module dependencies
+terminated: success
+out: hidden module dependencies
+terminated: success
+out: enslaving generics
+terminated: success
+out: enslaving generics
+terminated: success
+out: enslaving generics
+terminated: success
+out: generic dependencies
+terminated: success
+err: ParseError: ./mod2.crk:3:1: Instance of mod1.A has no member f
+err:   in generic instantiation at .*/main.crk:4:4
+err:\s*
+terminated, rc = 2049
+err: ParseError: .*/main.crk:1:13: Name AI does not belong to module mod1.  Second-order imports are not allowed.
+err:\s*
+terminated, rc = 2049
+out: aliased override
+terminated: success
+out: aliased override
+terminated: success
+out: cached alias of base func
+terminated: success
+out: cached alias of base func
+terminated: success
+%%STDIN%%

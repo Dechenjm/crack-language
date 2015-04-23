@@ -1,0 +1,336 @@
+
+This is the format of crack's meta-data (".crkm") cache files.  These files
+contain a binary representation of the interface of a module.
+
+There are two primitive types defined by the crack serializer (see
+model/Serializer.h), unsigned integers and blobs.
+
+Unsigned integers are stored as a variable length sequence of bytes (just like
+"VarInts" in Google protocol buffers), in which each byte consists of a single
+high-bit which is zero if the byte is the last byte in the number followed by
+7 bits of value.  The first byte is the low byte, the last is the high byte.
+
+For example, we would represent 385 (0x181) with the byte sequence:
+"0x81 0x03",  0x181's low seven bits = 0x01, which is not the last, so we set
+the high bit and get 0x81,
+The next seven bits are 0x03, which is the last so we get 0x03.
+
+Blobs consist of an unsigned integer (uint) describing the number of bytes
+that follow comprising the body of the blob.   For example, we would represent
+the ascii string "text" as the hex sequence:
+
+    04 74 65 78 74
+    /   \  | |  /
+# bytes  t e x t
+
+What follows is a description of the meta-data serialization format in a
+loosely crack-like definition language.  Some non-obvious definitions:
+
+array[type] is a uint "count" followed by count instances of "type"
+
+ref[type] is a way to define and reference objects that exist more than once
+in the serialized data, including objects that are self-referential.  It is
+stored as a uint object identifier followed by an instance of type if this is
+the first occurrence (the "definition") of the instance.  The identifier has
+a low-bit of 1 in this case, a low bit of zero if it is merely a reference to
+an existing instance.  For example, if we had some object represented by
+<data>, the first time we serialized it we might serialze it as "07 <data>",
+the second time simply as "06".  In this example, the object id is actually
+3, we shift by one and set the low-bit to 1 when it is initially defined.  (I
+don't think the "first definition" bit was strictly necessary).
+
+For structures with "optional" fields, we use a modified form of Google protobuf conventions.
+Optional fields are serialized as a blob somewhere in the structure.  If the
+structure has optional fields, but none are present for a particular instance,
+this blob gets serialized as a single zero value byte.  For every optional
+field that is present, we start with a uint describing the field and its type
+and then its data (see the protobuf documentation for details on how this
+works).  In these cases, we describe these fields as:
+
+    optional type name = tag
+
+So, for example:
+
+    optional blob someName = 1
+
+We override wire type 3 (the deprecated "begin group" type) for reference
+types.  Since the size of these types can not be known without knowledge of
+the field, we have to impose an order on optional data fields to preserve
+backwards compatibility.  A reader may read the optional area until it
+encounters a field tag for a reference type that it doesn't recognize, then
+ignore the remainder of the area, so reference types must come last.
+
+So given this, our meta-data format is:
+
+{{
+    MetaDataFile {
+        # the header is the information that is to be read before we bother
+        # reading the meta-data.  It must contain everything we need to
+        # determine whether the use of the cache is acceptable for this module.
+        Header header
+
+        # the type declarations.  These inherently get an object id based on
+        # their order, starting with 1 (0 is the object id for the model)
+        array[ref[TypeDecl]] decls
+
+        # All of the types in the module and all slave modules.
+        # XXX fix Definitions to reflect the fact that types are not
+        # serialized there.
+        array[TypeDef] types
+
+        # the module meta-data.
+        Definitions defs
+
+        # symbols imported from other modules that can be imported from this
+        # module (second-order imports)
+        array[blob] exports
+    }
+
+    Header {
+        # the hash of the string 'crack meta-data v1'
+        uint magic = 2271218416
+
+        # If non-empty, this is the canonical name of the master module.  If
+        # there is a master module, no further information is present in the
+        # cache file for this module.
+        blob master
+
+        if (!master) {
+            # the relative source path of the file.
+            blob sourcePath;
+
+            # source file MD5 signature
+            blob sourceSig
+
+            # a list of the the modules that this module
+            # directly depends on (does not include .builtin)
+            array[Dependency] deps
+        }
+    }
+
+    # identifies a dependency module by its canonical name and the hash of its
+    # interface.
+    Dependency {
+        blob canonicalName
+        blob metaDigest
+    }
+
+    SlaveModule {
+        # The fully qualified canonical name of the module.
+        blob canonicalName
+    }
+
+    TypeDecl {
+        blob name
+
+        # type flags are:
+        # 1 - pointer
+        # 2 - hasVTable
+        # 4 - abstract
+        # 8 - generic
+        uint flags
+
+        # If present, this is the slave module that owns the type.
+        optional ref[SlaveModule] owner = 2
+
+        # These have to come after the optional block because we need to
+        # create a type before we can parse the decls nested within it and to
+        # do that we need to know its owner.
+        array[ref[TypeDecl]] decls
+    }
+
+    Definitions {
+        # The public definitions, excluding types.  (Types have special
+        # ordering considerations across slave modules so all of them are
+        # serialized at the module level.
+        # Definitions are current in order of: non-alias symbols, and aliases.
+        # Overload definitions may be included more than once, with the
+        # aliases in a set of overloads serialized separately from the
+        # non-aliased functions.
+        array[Def] defs
+
+        # Private definitions need only be specified if the namespace contains
+        # a generic.
+        # These are not included when constructing or verifying the metaDigest.
+        array[Def] privateDefs
+    }
+
+    Def {
+        # the kind of definition:
+        #  1 a variable
+        #  2 a type
+        #  3 a generic
+        #  4 a function overload group
+        #  5 an alias
+        # "kind" determines which "subclass" of VarDef this entry actually is
+        # so we can correctly parse the remainder of it.
+        enum {
+            variableId = 1,
+            typeId = 2,
+            genericId = 3,
+            overloadId = 4,
+            aliasId = 5,
+            typeAliasId = 6,
+            constVarId = 7
+        }
+        uint kind;
+
+        switch (kind) {
+            case aliasId: AliasDef
+            case variableId: VarDef
+            case typeId: TypeDef
+            case overloadId: OverloadDef
+            case constVar: ConstVarDef
+        }
+    }
+
+    AliasDef {
+        blob alias
+        ref[Extern] ext
+    }
+
+    Extern {
+        blob module
+
+        # The name in the module.  This is repeated to allow dereferencing
+        # nested names, for example, in 'class A { class B {} }' we would store
+        # "A.B" as "name = 'A', name = 'B'".
+        # If the name references a type, it is always a simple type -
+        # specialized generic types are described by parameterizing them with
+        # typeParams.
+        repeated blob name = 3
+
+        # If the aliased object is a function loaded from a shared library,
+        # this field will be present containing the function definition so we
+        # can fully reconstitute it.
+        optional FuncDef shlibFuncDef = 1
+
+        # if the aliased object has dependencies on types in the local module
+        # (which can happen with generics constructed from a local type),
+        # we keep a list of them to ensure that they are available at the time
+        # the alias is reconstituted.
+        repeated ref[Type] localDeps = 2
+    }
+
+    VarDef {
+        blob name
+        uint instSlot  # the instance slot, 0 if there is none.
+        ref[Type] type
+
+        # If present, the slave module that owns the variable.
+        optional ref[SlaveModule] owner
+    }
+
+    # ref[Type] is exceptional.  All of the types in a module should have
+    # been declared in MetaDataFile.decls, so in the case of a local type we
+    # should always have a reference to one of those objects, never a
+    # definition.  If we get an object definition, it must be an alias (a.k.a
+    # "Extern") definition.
+    Type = Extern
+
+    ImportDef {
+        blob sourceName
+        optional blob localName = 1
+    }
+
+    Import {
+        array[blob] moduleName
+        array[ImportDef] importedSym
+    }
+
+    TypeDef {
+        # Note that this is the "true" object id - with a ref, the objectId is
+        # left-shifted 1 bit (if the low-bit is set, it's a definition,
+        # otherwise it's a reference).  But this field is always a reference,
+        # so there's no need for the bit-shifting.
+        uint objectId
+        if (flags & GENERIC) {
+            array[ref[Import]] importedAnnotations
+            array[blob] parms
+            array[Token] tokens
+        } else {
+            array[ref[Type]] bases
+            optional ref[Type] templateType = 1
+            repeated ref[Type] genericParms = 2
+
+            Definitions defs
+        }
+    }
+
+    OverloadDef {
+        blob name
+        array[FuncDef] overloads
+
+        # If present, this is the slave module that owns the overload.
+        optional ref[SlaveModule] owner
+    }
+
+    FuncEntry {
+        uint isAlias
+        switch (isAlias) {
+            case true: FuncAlias
+            case false: FuncDef
+        }
+    }
+
+    FuncAlias {
+        Extern ext
+        array[VarDef] args
+    }
+
+    ArgDef {
+        blob name
+        ref[Type] type
+    }
+
+    FuncDefBody {
+        ref[Type] returnType
+        uint flags;
+        array[ArgDef] args
+        optional ref[Type] receiverType = 1
+        optional uint vtableSlot = 2
+    }
+
+    FuncDef {
+        uint isAlias
+        switch (isAlias) {
+            case true: FuncAlias
+            case false: FuncDefBody
+    }
+
+    ConstVarDef {
+        blob name
+        ref[Type] type
+        uint kind
+        switch (kind) {
+            case constIntReqUnsigned: uint
+            case constInt: uint
+            case constFloat: 8 bytes
+            case constNull: empty
+            case constAgg: empty
+        }
+
+        # If present, this is the slave module that owns the constant.
+        optional ref[SlaveModule] owner
+    }
+
+    Location {
+        blob sourceName
+        uint lineNum
+    }
+
+    Token {
+        uint tokenType
+
+        // see parser/Token.h for the values of these
+        if (tokenType in (Token::integer, Token::string, Token::ident,
+                          Token::floatLit, Token::octalLit, Token::hexLit,
+                          Token::binLit)
+            ) {
+
+            blob tokenData
+        }
+
+        ref[Location] loc
+    }
+}}

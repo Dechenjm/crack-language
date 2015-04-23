@@ -1,0 +1,50 @@
+// Copyright 2012 Google Inc.
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+@import crack.extgen generateExtension;
+
+@generateExtension crack.ext._fluidsynth {
+    @filename 'opt/_fluidsynth.cc'
+    @crack_internal
+    @inject '#include <fluidsynth.h>\n';
+    @inject 'typedef int Undef;\n';
+
+    @cname Undef
+    class fluid_settings_t;
+    @cname Undef
+    class fluid_synth_t;
+    @cname Undef
+    class fluid_audio_driver_t;
+
+    fluid_settings_t new_fluid_settings();
+    fluid_synth_t new_fluid_synth(fluid_settings_t settings);
+    void delete_fluid_synth(fluid_synth_t synth);
+    void delete_fluid_settings(fluid_settings_t settings);
+
+    int fluid_synth_noteon(fluid_synth_t synth, int channel, int key,
+                           int velocity
+                           );
+
+    int fluid_synth_noteoff(fluid_synth_t synth, int channel, int key);
+    int fluid_synth_pitch_bend(fluid_synth_t synth, int channel, int val);
+    int fluid_synth_program_change(fluid_synth_t synth, int channel,
+                                   int program
+                                   );
+
+    int fluid_synth_all_notes_off(fluid_synth_t synth, int channel);
+    int fluid_synth_all_sounds_off(fluid_synth_t synth, int channel);
+
+
+    fluid_audio_driver_t new_fluid_audio_driver(fluid_settings_t settings,
+                                                fluid_synth_t synth
+                                                );
+    int fluid_synth_sfload(fluid_synth_t synth,
+                           byteptr filename,
+                           int reset_presets
+                           );
+
+}

@@ -1,0 +1,49 @@
+# Binding for builder/util.md5.h
+# Copyright 2012 Google Inc.
+# Copyright 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+#
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# 6/22/2012
+
+
+@import crack.extgen generateExtension;
+
+@generateExtension crack.runtime.md5 {
+    @filename 'runtime/MD5.cc'
+    @dumpsymbols 'opt/md5.txt'
+    @inject I'// Copy\
+                 right 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+              // 6/22/2012
+              //
+              //  This Source Code Form is subject to the terms of the \
+                  Mozilla Public
+              //  License, v. 2.0. If a copy of the MPL was not distributed \
+                  with this
+              //  file, You can obtain one at http://mozilla.org/MPL/2.0/.\n'
+    @inject '#include "util/md5.h"\n'
+    @crack_internal
+
+
+    @inject I'md5_state_s *crk_new_md5_state() {
+                md5_state_s *state = new md5_state_s;
+                md5_init(state);
+                return state;
+             }\n'
+
+    @cname md5_state_s
+    class md5;
+
+    @cname crk_new_md5_state
+    md5 md5_init();
+
+    // Append a string to the message
+    void md5_append(md5 state, byteptr data, int nbytes);
+
+    // Finish the message and return the digest.
+    @cname md5_finish
+    void md5_finish(md5 state, byteptr digest);
+
+}

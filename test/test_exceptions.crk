@@ -1,0 +1,340 @@
+// Copyright 2011-2012 Google Inc.
+// Copyright 2012 Shannon Weyrick <weyrick@mozek.us>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+import crack.runtime free, getLocation, registerHook, strlen, 
+    EXCEPTION_MATCH_FUNC, EXCEPTION_FRAME_FUNC;
+
+# temporary work-around for the problem of trying to use the special .class
+# accessor from a VTableBase object.
+class Obj : VTableBase {}
+
+int exceptionMatchFunc(Class classObj, Obj obj) {
+    return obj.class.isSubclass(classObj) ? 1 : 0;
+}
+
+registerHook(EXCEPTION_MATCH_FUNC, exceptionMatchFunc);
+
+class Exception : VTableBase {}
+class FooError : Exception {
+    int val;
+    oper init(int val) : val = val {}
+}
+class NotException : VTableBase {}
+
+bool cleanedUp;
+class Cleanup { oper release() { cleanedUp = 1; } }
+
+if (1) {
+    bool gotIt;
+    cleanedUp = 0;
+    try {
+        Cleanup c;
+        throw Exception();
+    } catch (Exception ex) {
+        gotIt = 1;
+    }
+    if (!gotIt)
+        puts('FAILED basic exception handling.');
+
+    if (!cleanedUp)
+        puts('FAILED basic exception cleanup.');
+}
+
+# exception discrimination
+if (1) {
+    bool gotIt;
+    try {
+        throw Exception();
+    } catch (FooError ex) {
+        puts('FAILED exception discrimination: wrong exception chosen');
+    } catch (Exception ex) {
+        gotIt = 1;
+    }
+    if (!gotIt)
+        puts('FAILED exception discrimination: correct catch not chosen');
+}
+
+if (1) {
+    bool gotFoo, gotEx;
+    cleanedUp = 0;
+    try {
+        try {
+            Cleanup c;
+            throw Exception();
+        } catch (FooError ex) {
+            gotFoo = 1;
+        }
+    } catch (Exception ex) {
+        gotEx = 1;
+    }
+    if (gotFoo)
+        puts('FAILED nested exception handling (matched inner catch).');
+
+    if (!gotEx)
+        puts('FAILED nested exception handling (missed catch).');
+
+    if (!cleanedUp)
+        puts('FAILED nested exception cleanup.');
+}
+
+if (1) {
+    bool didBreak;
+    void foo() {
+        while (1) {
+            try { throw Exception(); }
+            catch (FooError ex) { return; }
+            catch (Exception ex) { break; }
+        }
+        didBreak = 1;
+    }
+    foo();
+    if (!didBreak)
+        puts('FAILED terminality check.');
+}
+
+if (1) {
+    int val;
+    try {
+        throw FooError(1010);
+    } catch (FooError ex) {
+        val = ex.val;
+    }
+    if (val != 1010)
+        puts('FAILED getting the exception object');
+}
+
+if (1) {
+    void f() { throw Exception(); }
+}
+
+if (1) {
+    cleanedUp = 0;
+    void f() {
+        Cleanup c;
+        throw Exception();
+    }
+    try {
+        f();
+    } catch (Exception ex) {
+    }
+    if (!cleanedUp)
+        puts('FAILED cleanup in nested contexts');
+}
+
+if (1) {
+    cleanedUp = 0;
+    void g() {
+        throw Exception();
+    }
+
+    void f() {
+        Cleanup c;;
+        g();
+    }
+
+    try {
+        f();
+    } catch (Exception ex) {
+    }
+
+    if (!cleanedUp)
+        puts('FAILED pass-through cleanup never got called');
+}
+
+if (1) {
+    cleanedUp = 0;
+    void f() {
+        Cleanup c;
+        try {
+            throw Exception();
+        } catch (FooError ex) {
+        }
+    }
+    
+    try {
+        f();
+    } catch (Exception ex) {
+    }
+    
+    if (!cleanedUp)
+        puts('FAILED cleanup outside of try/catch');
+}
+
+# exceptions raised from cleanups to the next cleanup
+if (1) {
+    int cleanupA, cleanupB;
+    bool caughtException;
+    class A { oper release() { ++cleanupA; } }
+    class B { oper release() { ++cleanupB; throw Exception(); } }
+    try {
+        A a;
+        B b;
+    } catch (Exception ex) {
+        caughtException = 1;
+    }
+    
+    if (cleanupB < 1)
+        puts('FAILED exceptions from cleanups: B cleanup not called.');
+    else if (cleanupB > 1)
+        puts('FAILED exceptions from cleanups: B cleanup called multiple '
+              'times'
+             );
+    
+    if (cleanupA != 1)
+        puts('FAILED exceptions from cleanups: A cleanup not called once');
+    
+    if (!caughtException)
+        puts('FAILED exceptions from cleanups: exception not raised or '
+              'caught'
+             );
+}
+
+# throwing a new exception from a catch
+if (1) {
+    bool didInner, didOuter;
+    
+    try {
+        try {
+            throw Exception();
+        } catch (Exception ex) {
+            didInner = 1;
+            throw Exception();
+        }
+    } catch (Exception ex) {
+        didOuter = 1;
+    }
+    
+    if (!didInner)
+        puts('FAILED exceptions from a catch: missed inner catch');
+    if (!didOuter)
+        puts('FAILED exceptions from a catch: missed outer catch');
+}
+
+# throwing from a cleanup handler
+if (1) {
+    int cleanupA, cleanupB, exceptionVal;
+    bool caughtException;
+    class A { oper release() { ++cleanupA; } }
+    class B { oper release() { ++cleanupB; throw FooError(2); } }
+    void f() {
+        throw FooError(1);
+    }
+    
+    try {
+        A a;
+        B foo;
+        f();
+    } catch (FooError ex) {
+        caughtException = 1;
+        exceptionVal = ex.val;
+    }
+    
+    if (!cleanupB)
+        puts('FAILED throwing from a cleanup: cleanup not released');
+    
+    if (!cleanupA)
+        puts('FAILED throwing from a cleanup: subsequent cleanup not called');
+    
+    if (!caughtException)
+        puts('FAILED throwing from a cleanup: exception not caught');
+    
+    if (exceptionVal != 2)
+        puts('FAILED throwing from a cleanup: exception object not converted');
+}
+
+# verify that exception frame callbacks are correctly called.
+if (1) {
+    
+    # array of single character function names
+    funcs := byteptr(100);
+    cur := 0;
+    funcs[0] = 0;
+    
+    void exceptionFrame(Exception obj, voidptr addr) {
+        info := array[byteptr](3);
+        getLocation(addr, info);
+        
+        # store the 3rd from last character of the function name in our array
+        # (we store names as, e.g., 'f()', so this gets us the function name)
+        funcs[cur++] = info[0][strlen(info[0]) - 3];
+        funcs[cur] = 0;
+        free(info);
+    }
+    
+    registerHook(EXCEPTION_FRAME_FUNC, exceptionFrame);
+    
+    int cmp(byteptr a, byteptr b) {
+        uint i;
+        for (i = 0; a[i] && a[i] == b[i]; ++i);
+        return a[i] - b[i];
+    }
+    
+    void f() {
+        throw Exception();
+    }
+    
+    void g() {
+        f();
+    }
+    
+    bool gotEx;
+    try {
+        g();
+    } catch (Exception ex) {
+        if (cmp(funcs, 'fg')) {
+            puts('FAILED exception frame info: invalid function sequence:');
+            puts(funcs);
+        }
+        gotEx = 1;
+    }
+    
+    if (!gotEx)
+        puts('FAILED exception frame info: did not get the exception');
+    
+}
+
+// verify that assignment cleanups work correctly when an exception is thrown 
+// from the value expression.
+if (1) {
+    cleanedUp = 0;
+    Cleanup c;
+    Cleanup f() { throw Exception(); }
+    try {
+        c = f();
+    } catch (Exception e) {
+    }
+    
+    if (cleanedUp)
+        puts('FAILED deferred cleanup during assignment');
+    
+    class A {
+        Cleanup c;
+    }
+    A a = {};
+    try {
+        a.c = f();
+    } catch (Exception e) {
+    }
+    
+    if (cleanedUp)
+        puts('FAILED deferred cleanup during fild assignment');
+}
+if (!cleanedUp)
+    puts('FAILED to ever clean up a cleanup var!');
+
+puts('ok');
+
+// try block ends with a terminator
+#void func() {
+#    try {
+#        return;
+#    } catch (Exception ex) {
+#    }
+#}
+
+// test multiple try statements in the same context.

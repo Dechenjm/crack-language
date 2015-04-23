@@ -1,0 +1,107 @@
+// Expose rand/srand random/srandom functions in libc
+// Copyright 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+//
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+//
+
+import crack.cont.numericarray NumericVector;
+import crack.hash.murmur3 Murmur3_32;
+import crack.io cout;
+import crack.lang AppendBuffer, Buffer, InvalidArgumentError, ManagedBuffer;
+import crack.runtime random, srandom, setstate, initstate;
+import crack.time Time;
+@export_symbols random, srandom, setstate, initstate;
+
+/// Return a byffer with the length specified that has a very high probablility
+/// of being unique due to it's use of a high-resolution time values combined
+/// with system random numbers.
+AppendBuffer uuid(uint numbytes) {
+    pages := (numbytes + 3) / 4;
+    result := AppendBuffer(pages);
+    result.size = numbytes;
+
+    if (numbytes > 0) {
+        buf := ManagedBuffer(16);
+        buf.size = 16;
+        pages /= 4;
+
+        t := Time.now();
+        h := Murmur3_32();
+        sourceInts := array[int32](buf.buffer);
+        hashInts := array[uint32](result.buffer);
+
+        srandom(uint(t.nsecs));
+        
+        for (uint i = 0; i < pages; i++) {
+            t.setToNow(null);
+            sourceInts[0] = t.nsecs;
+            sourceInts[1] = t.secs;
+            sourceInts[2] = int32(random());
+            sourceInts[3] = int32(random());
+
+            h.update(buf);
+            hashInts[i] = h.asUInt32();
+        }
+    }
+    return result;
+}
+
+// Mersenne Twister random number generator from pseudocode at
+// http://en.wikipedia.org/wiki/Mersenne_twister
+// Create a length 624 array to store the state of the generator
+class MersenneTwister {
+    NumericVector[uint] _mt = NumericVector[uint].empty(624);
+    uint _index;
+
+    // Initialize the generator from a seed
+    void _initializeGenerator(uint seed) {
+        _mt[0] = seed;
+        for (uint i = 1; i < 624; i++) {
+            _mt[i] = (1812433253 * (_mt[i - 1] ^ (_mt[i - 1] >> 30)) + i) &
+                     0xffffffff;
+        }
+    }
+
+    oper init(uint seed) {
+        _initializeGenerator(seed);
+    }
+
+    // Generate an array of 624 untempered numbers
+    void _generateNumbers() {
+        uint y;
+        for (uint i = 0; i < 624; i++) {
+            y = (_mt[i] & 0x80000000) + (_mt[(i + 1) % 624] & 0x7fffffff);
+            _mt[i] = _mt[(i + 397) % 624] ^ (y >> 1);
+            if (y % 2) {              // y is odd
+                _mt[i] =  _mt[i] ^ 2567483615; // 0x9908b0df
+            }
+        }
+    }
+
+    // Extract a tempered pseudorandom number based on the index-th value,
+    // calling generate_numbers() every 624 numbers
+    uint get() {
+        if (_index == 0) {
+            _generateNumbers();
+        }
+
+        uint y = _mt[_index];
+        y = y ^ (y >> 11);
+        y = y ^ (y << 7) & 2636928640;
+        y = y ^ (y << 15) & 4022730752;
+        y = y ^ y >> 18;
+        _index = (_index + 1) % 624;
+        return y;
+    }
+
+    NumericVector[uint] get(uint len) {
+        A := NumericVector[uint].empty(len);
+        uint y;
+        for (uint i=0; i < len; i++) {
+            A[i] = get();
+        }
+        return A;
+    }
+}

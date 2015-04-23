@@ -1,0 +1,217 @@
+// Copyright 2010-2012 Google Inc.
+// Copyright 2011 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+# Crack SDL bindings.
+
+@import crack.extgen generateExtension;
+
+@generateExtension crack.ext._sdl {
+    @filename 'opt/_sdl.cc'
+    @inject '#include <SDL.h>\n'
+    @inject 'SDL_Event *SDL_EventNew() { return new SDL_Event; }\n'
+    @inject 'int SDL_Event_GetType(SDL_Event *evt) { return evt->type; }\n';
+    @inject 'SDL_KeyboardEvent *SDL_Event_GetKey(SDL_Event *evt) { return &evt->key; }\n';
+    @inject 'SDL_keysym *SDL_KeyboardEvent_GetKeysym(SDL_KeyboardEvent *evt) { return &evt->keysym; }\n';
+    @inject 'unsigned SDL_keysym_GetScancode(SDL_keysym *s) { return s->scancode; }\n';
+    @inject 'unsigned SDL_keysym_GetSym(SDL_keysym *s) { return s->sym; }\n';
+    @inject 'unsigned SDL_keysym_GetMod(SDL_keysym *s) { return s->mod; }\n';
+    @inject 'unsigned SDL_keysym_GetUnicode(SDL_keysym *s) { return s->unicode; }\n';
+    @inject 'uint8_t SDL_KeyboardEvent_GetType(SDL_KeyboardEvent *evt) { return evt->type; }\n';
+    @inject 'uint8_t SDL_KeyboardEvent_GetWhich(SDL_KeyboardEvent *evt) { return evt->which; }\n';
+    @inject 'uint8_t SDL_KeyboardEvent_GetState(SDL_KeyboardEvent *evt) { return evt->state; }\n';
+    @inject 'SDL_MouseMotionEvent *SDL_Event_GetMotion(SDL_Event *evt) { return &evt->motion; }\n';
+    @inject 'uint SDL_MouseMotionEvent_GetX(SDL_MouseMotionEvent *evt) { return evt->x; }\n';
+    @inject 'uint SDL_MouseMotionEvent_GetY(SDL_MouseMotionEvent *evt) { return evt->y; }\n';
+    @inject 'SDL_ResizeEvent *SDL_Event_GetResize(SDL_Event *evt) { return &evt->resize; }\n';
+    @inject 'int16_t SDL_ResizeEvent_GetW(SDL_ResizeEvent *evt) { return evt->w; }\n';
+    @inject 'int16_t SDL_ResizeEvent_GetH(SDL_ResizeEvent *evt) { return evt->h; }\n';
+    @inject '
+void crk_SDL_Rect_init(SDL_Rect *rect, int16_t x, int16_t y, uint16_t w, uint16_t h) {
+    rect->x = x;
+    rect->y = y;
+    rect->w = w;
+    rect->h = h;
+}
+
+SDL_JoyAxisEvent *SDL_Event_GetJoyAxisEvent(SDL_Event *evt) {
+    return &evt->jaxis;
+}
+
+uint8_t SDL_JoyAxisEvent_GetType(SDL_JoyAxisEvent *evt) {
+    return evt->type;
+}
+
+uint8_t SDL_JoyAxisEvent_GetWhich(SDL_JoyAxisEvent *evt) {
+    return evt->which;
+}
+
+uint8_t SDL_JoyAxisEvent_GetAxis(SDL_JoyAxisEvent *evt) {
+    return evt->axis;
+}
+
+int16_t SDL_JoyAxisEvent_GetValue(SDL_JoyAxisEvent *evt) {
+    return evt->value;
+}
+
+SDL_JoyButtonEvent *SDL_Event_GetJoyButtonEvent(SDL_Event *evt) {
+    return &evt->jbutton;
+}
+
+uint8_t SDL_JoyButtonEvent_GetType(SDL_JoyButtonEvent *evt) {
+    return evt->type;
+}
+
+uint8_t SDL_JoyButtonEvent_GetWhich(SDL_JoyButtonEvent *evt) {
+    return evt->which;
+}
+
+uint8_t SDL_JoyButtonEvent_GetState(SDL_JoyButtonEvent *evt) {
+    return evt->state;
+}
+
+SDL_MouseButtonEvent *SDL_Event_GetMouseButtonEvent(SDL_Event *evt) {
+    return &evt->button;
+}
+
+struct Undef {};
+';
+    @crack_internal
+
+    
+    const uint32 SDL_INIT_TIMER,
+                 SDL_INIT_AUDIO,
+                 SDL_INIT_VIDEO,
+                 SDL_INIT_CDROM,
+                 SDL_INIT_JOYSTICK,
+                 SDL_INIT_EVERYTHING,
+                 SDL_INIT_NOPARACHUTE,
+                 SDL_INIT_EVENTTHREAD;
+    
+    int SDL_Init(uint32 flags);
+    
+    int SDL_Quit();
+    
+    class SDL_Surface;
+
+    const uint32 SDL_SWSURFACE,
+                 SDL_HWSURFACE,
+                 SDL_ASYNCBLIT,
+                 SDL_ANYFORMAT,
+                 SDL_HWPALETTE,
+                 SDL_DOUBLEBUF,
+                 SDL_FULLSCREEN,
+                 SDL_OPENGL,
+                 SDL_OPENGLBLIT,
+                 SDL_RESIZABLE,
+                 SDL_NOFRAME;
+    
+    SDL_Surface SDL_SetVideoMode(int width, int height, int bpp, 
+                                 uint32 flags
+                                 );
+
+    class SDL_Event;
+    class SDL_Rect {
+        int16 x, y;
+        uint16 w, h;
+        
+        @cname crk_SDL_Rect_init
+        oper init(int16 x, int16 y, uint16 w, uint16 h);
+    }
+
+    SDL_Event SDL_EventNew();
+    int SDL_Event_GetType(SDL_Event event);
+    int SDL_Flip(SDL_Surface screen);
+    int SDL_FillRect(SDL_Surface surface, SDL_Rect rect, uint32 color);
+
+    
+    class SDL_KeyboardEvent;
+    SDL_KeyboardEvent SDL_Event_GetKey(SDL_Event evt);
+    class SDL_keysym;
+    SDL_keysym SDL_KeyboardEvent_GetKeysym(SDL_KeyboardEvent evt);
+    uint SDL_keysym_GetScancode(SDL_keysym keysym);
+    uint SDL_keysym_GetSym(SDL_keysym keysym);
+    uint SDL_keysym_GetMod(SDL_keysym keysym);
+    uint SDL_keysym_GetUnicode(SDL_keysym keysym);
+    byte SDL_KeyboardEvent_GetType(SDL_KeyboardEvent evt);
+    byte SDL_KeyboardEvent_GetWhich(SDL_KeyboardEvent evt);
+    byte SDL_KeyboardEvent_GetState(SDL_KeyboardEvent evt);
+    class SDL_MouseMotionEvent;
+    SDL_MouseMotionEvent SDL_Event_GetMotion(SDL_Event evt);
+    uint SDL_MouseMotionEvent_GetX(SDL_MouseMotionEvent evt);
+    uint SDL_MouseMotionEvent_GetY(SDL_MouseMotionEvent evt);
+    class SDL_ResizeEvent;
+    SDL_ResizeEvent SDL_Event_GetResize(SDL_Event evt);
+    int16 SDL_ResizeEvent_GetW(SDL_ResizeEvent evt);
+    int16 SDL_ResizeEvent_GetH(SDL_ResizeEvent evt);
+    
+    class SDL_JoyAxisEvent {
+        byte type, which, axis;
+        int16 value;
+    }
+    
+    SDL_JoyAxisEvent SDL_Event_GetJoyAxisEvent(SDL_Event evt);
+    byte SDL_JoyAxisEvent_GetType(SDL_JoyAxisEvent evt);
+    byte SDL_JoyAxisEvent_GetWhich(SDL_JoyAxisEvent evt);
+    byte SDL_JoyAxisEvent_GetAxis(SDL_JoyAxisEvent evt);
+    int16 SDL_JoyAxisEvent_GetValue(SDL_JoyAxisEvent evt);
+    
+    class SDL_JoyButtonEvent {
+        byte type, which, button, state;
+    }
+    
+    SDL_JoyButtonEvent SDL_Event_GetJoyButtonEvent(SDL_Event evt);
+    byte SDL_JoyButtonEvent_GetType(SDL_JoyButtonEvent evt);
+    byte SDL_JoyButtonEvent_GetWhich(SDL_JoyButtonEvent evt);
+    byte SDL_JoyButtonEvent_GetState(SDL_JoyButtonEvent evt);
+
+    @cname Undef class SDL_Joystick;
+    SDL_Joystick SDL_JoystickOpen(int deviceIndex);
+    int SDL_JoystickOpened(int deviceIndex);
+    void SDL_JoystickClose(SDL_Joystick joystick);
+
+    class SDL_MouseButtonEvent {
+        byte type, which, button, state;
+        uint16 x, y;
+    }
+    
+    SDL_MouseButtonEvent SDL_Event_GetMouseButtonEvent(SDL_Event evt);
+    
+    void SDL_WarpMouse(uint x, uint y);
+
+    const uint32 SDL_NOEVENT, 
+                 SDL_KEYDOWN,
+                 SDL_KEYUP, 
+                 SDL_MOUSEMOTION,
+                 SDL_MOUSEBUTTONDOWN,
+                 SDL_MOUSEBUTTONUP, 
+                 SDL_JOYAXISMOTION, 
+                 SDL_JOYBALLMOTION, 
+                 SDL_JOYHATMOTION, 
+                 SDL_JOYBUTTONDOWN, 
+                 SDL_JOYBUTTONUP, 
+                 SDL_QUIT, 
+                 SDL_SYSWMEVENT, 
+                 SDL_EVENT_RESERVED2, 
+                 SDL_EVENT_RESERVED3, 
+                 SDL_USEREVENT,
+                 SDL_VIDEORESIZE,
+                 SDL_NUMEVENTS;
+    
+    const uint32 SDL_PRESSED, SDL_RELEASED;
+    
+    int SDL_PollEvent(SDL_Event event);
+    
+    const uint32 SDL_GL_RED_SIZE,
+                 SDL_GL_GREEN_SIZE,
+                 SDL_GL_BLUE_SIZE,
+                 SDL_GL_DEPTH_SIZE,
+                 SDL_GL_DOUBLEBUFFER;
+    
+    int SDL_GL_SetAttribute(uint32 attr, int value);
+    int SDL_GL_GetAttribute(uint32 attr, array[int] value);
+    void SDL_GL_SwapBuffers();
+}

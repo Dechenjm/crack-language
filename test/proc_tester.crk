@@ -1,0 +1,44 @@
+#!/usr/local/bin/crack
+# Copyright 2012 Google Inc.
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# All Rights Reserved.
+#
+# This script is used by the process tester to verify reading to and writing
+# from child processes.
+
+import crack.io cout, cerr;
+import crack.lang AppendBuffer;
+
+String alphabet() {
+    AppendBuffer buf = {26};
+    for (byte b = 0; b < 26; ++b)
+        buf.append(b'a' + b);
+    return String(buf, true);
+}
+
+const TEST_STRING := alphabet();
+
+String makeLine(uint len) {
+    AppendBuffer buf = {len + 1};
+    while (len > TEST_STRING.size) {
+        buf.extend(TEST_STRING);
+        len -= TEST_STRING.size;
+    }
+    buf.extend(TEST_STRING, len);
+    buf.append(b'\n');
+    return String(buf, true);
+}
+
+void main() {
+    # interleave output to stdout and stderr.
+    for (int i = 0; i < 1100; ++i) {
+        cout `$(makeLine(i))`;
+        cerr `$(makeLine(i))`;
+    }
+}
+
+main();

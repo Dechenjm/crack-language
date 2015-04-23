@@ -1,0 +1,56 @@
+# Copyright 2010-2011 Google Inc.
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# tests of basic Object stuff
+
+import crack.io cout;
+
+# test the use of nulls in the comparison operators.
+class Int {
+    int val;
+
+    oper init(int val) : val = val {}
+    
+    int cmp(Object other) {
+        if (other.isa(Int))
+            return val - Int.unsafeCast(other).val;
+        else
+            return Object.cmp(other);
+    }
+}
+
+Object n;
+Object o = {};
+Int a = {1}, b = {2};
+
+if (!(n < o)) cout `FAILED: n < o failed\n`;
+if (n < n) cout `FAILED: n < n failed\n`;
+if (b < a) cout `FAILED: b < a failed\n`;
+if (!(n <= n)) cout `FAILED: n <= n failed\n`;
+if (!(n <= o)) cout `FAILED: n <= o failed\n`;
+if (b <= a) cout `FAILED: b <= a failed\n`;
+if (!(n == n)) cout `FAILED: n == n failed\n`;
+if (n == o) cout `FAILED: n == o failed\n`;
+if (a == b) cout `FAILED: a == b failed\n`;
+if (n != n) cout `FAILED: n != n failed\n`;
+if (!(n != o)) cout `FAILED: n != o failed\n`;
+if (!(a != b)) cout `FAILED: a != b failed\n`;
+if (!(n >= n)) cout `FAILED: n >= n failed\n`;
+if (n >= o) cout `FAILED: n >= o failed\n`;
+if (a >= b) cout `FAILED: a >= b failed\n`;
+if (n > n) cout `FAILED: n > n failed\n`;
+if (n > o) cout `FAILED: n > o failed\n`;
+if (a > b) cout `FAILED: a > b failed\n`;
+
+# verify that comparison falls through to pointer comparison.
+if (1) {
+    x := Object();
+    y := Object();
+    if (x > y && y > x || y > x && x > y)
+        cout `FAILED default Object compare.\n`;
+}
+
+cout `ok\n`;
