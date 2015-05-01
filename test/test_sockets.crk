@@ -1,0 +1,129 @@
+// Copyright 2010-2012 Google Inc.
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+import crack.runtime fileExists, fileRemove, c_strerror;
+import crack.cont.array Array;
+import crack.functor Function2;
+import crack.lang die, ManagedBuffer;
+import crack.io cout, FStr;
+import crack.net resolve, Address, InetAddress, Socket, UnixAddress, Poller,
+    PollEvent, AF_INET, AF_UNIX, INADDR_ANY, POLLIN, POLLERR, SOCK_STREAM;
+import crack.time TimeDelta;
+
+# create a server socket, bind to a port and listen.
+srv := Socket(AF_INET, SOCK_STREAM, 0);
+srv.setReuseAddr(true);
+if (!srv.bind(InetAddress(INADDR_ANY, 9923)))
+    die('bind failed');
+if (!srv.listen(5))
+    die('listen failed');
+
+# create a client socket
+cln := Socket(AF_INET, SOCK_STREAM, 0);
+if (!cln.connect(InetAddress(127, 0, 0, 1, 9923)))
+    die('connect failed');
+
+# get the new connection on the server side.
+accepted := srv.accept();
+
+# send a string from the server, make sure we can receive it in the client.
+cln.send('test string', 0);
+ManagedBuffer buf = {1024};
+buf.size = uint(accepted.sock.recv(buf, 0));
+fromClient := String(buf, true);
+if (fromClient != 'test string')
+    die ('did not receive "test string" from client');
+
+# send a string from client to server
+accepted.sock.send('another test string', 0);
+buf = ManagedBuffer(1024);
+buf.size = uint(cln.recv(buf, 0));
+
+fromServer := String(buf, false);
+if (fromServer != 'another test string')
+    die('did not receive "another test string" from server');
+
+# test Pollers
+bool ok;
+int clientCallback(Poller poller, PollEvent event) {
+    ok = true;
+    return POLLIN | POLLERR;
+}
+poller := Poller();
+poller.add(accepted.sock, POLLIN | POLLERR);
+poller.add(cln, Function2[int, Poller, PollEvent](clientCallback));
+cln.send('to server', 0);
+poller.wait(null);
+PollEvent p;
+while (p = poller.nx()) {
+    if (!(p.pollable is accepted.sock)) {
+        cout `fd = $(p.fd), events = $(p.events)\n`;
+        die("didn't poll the server");
+    } else {
+        ok = true;
+    }
+}
+
+if (!ok)
+    die("didn't get the server back");
+
+# clear the data from the accepted socket
+buf.size = 1024;
+accepted.sock.recv(buf, 0);
+
+accepted.sock.send('to client', 0);
+poller.wait(null);
+ok = false;
+while (p = poller.nx()) {
+    if (!(p.pollable is cln))
+        die("didn't poll the client");
+    else
+        ok = true;
+}
+
+if (!ok)
+    die("didn't get the client back");
+
+# clear the data
+cln.recv(buf, 0);
+
+# test an empty timeout
+if (poller.wait(TimeDelta(0, 0)) != 0)
+    die("waiting on a zero timeout did not return zero!");
+
+# TODO: this has an external dependency on the ability to reolve localhost,
+# please fix.
+localhost := resolve('localhost');
+if (FStr() `$localhost` != '[127.0.0.1:0]')
+    die('FAILED localhost lookup formatting');
+if (localhost != Array[Address]![InetAddress(127, 0, 0, 1, 0)])
+    die('FAILED localhost lookup');
+
+# create a unix domain socket
+if (1) {
+    const UNIX_SOCK_PATH := '/tmp/crack_test.sock';
+    if (fileExists(UNIX_SOCK_PATH.buffer))
+        fileRemove(UNIX_SOCK_PATH.buffer);
+    usrv := Socket(AF_UNIX, SOCK_STREAM, 0);
+    unixAddr := UnixAddress(UNIX_SOCK_PATH);
+    if (!usrv.bind(unixAddr))
+        cout `FAILED error during bind: $(c_strerror())\n`;
+    usrv.listen(5);
+    uclt := Socket(AF_UNIX, SOCK_STREAM, 0);
+    if (!uclt.connect(unixAddr))
+        cout `FAILED error duing connect: $(c_strerror())\n`;
+    conn := usrv.accept();
+    uclt.send('test string', 0);
+    if (conn.sock.recv(buf, 0) != 11 || buf != 'test string')
+        die('FAILED unix sockets');
+    uclt.close();
+    conn.sock.close();
+    usrv.close();
+    fileRemove(UNIX_SOCK_PATH.buffer);
+}
+
+cout `ok\n`;

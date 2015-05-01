@@ -1,0 +1,39 @@
+# Copyright 2010-2012 Google Inc.
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# Some basic tests of the primitive array generics.
+
+array[int32] a = {1};
+if (!(byteptr(a + int(1)) is byteptr(a) + int(4)))
+    puts('FAILED array integer offsets');
+
+if (!(byteptr(a + uint(1)) is byteptr(a) + uint(4)))
+    puts('FAILED array integer offsets');
+
+a[uint(0)] = 100;
+if (a[uint(0)] != 100)
+    puts('FAILED uint indexing');
+
+a[int(0)] = 100;
+if (a[int(0)] != 100)
+    puts('FAILED int indexing');
+
+if ((a[0] = 200) != 200)
+    puts('FAILED array assignment does not work as an expression');
+
+class A {} class B : A {}
+aa := array[A](1);
+aa[0] = B();
+
+if (1) {
+    voidptr v = array[int]![1, 2, 3];
+    array[int] a = {v};
+    if (a[0] != 1 || a[1] != 2 || a[2] != 3)
+        puts('FAILED explicit conversion of voidptr to array');
+}
+
+puts('ok');
+

@@ -1,0 +1,237 @@
+// Copyright 2011-2012 Google Inc.
+// Copyright 2011 Shannon Weyrick <weyrick@mozek.us>
+// Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+import crack.lang Formatter;
+import crack.lang Buffer, AppendBuffer, CString, InvalidArgumentError;
+import crack.io Writer, cout;
+import crack.cont.array Array;
+
+class StringArray : Array[String] {
+
+    # memory management for null terminated strings from makePrimArray
+    # otherwise unused
+    Array[CString] __nullTermStore = null;
+
+    oper init(uint size) : Array[String](size) {}
+    oper init() {}    
+    
+    void formatTo(Formatter fmt) {
+        fmt `[`;
+        bool first = true;
+        for (elem :in this) {
+            if (!first)
+                fmt `, `;
+            else
+                first = false;
+            fmt.format(elem.getRepr());
+        }
+        fmt `]`;
+    }
+
+    ## Returns a primitive array based on the array (useful for communicating 
+    ## to C bindings). The strings will be null terminated, and the array 
+    ## will contain one extra null at the end
+    ## @unsafe
+    array[byteptr] makePrimArray() {
+        size := count();
+        # we initialize the null term store to the full size of the string
+        # array, but only use those indexes that actually need to be copied
+        # for null termination
+        __nullTermStore = Array[CString](size);
+        prim := array[byteptr](size+1);
+        for (int i; i < size; ++i) {
+            # if already null terminated (CString or StaticString), use
+            # direct buffer
+            if (this[i].isa(CString) || this[i].isa(StaticString)) {
+                prim[i] = this[i].buffer;
+
+            # otherwise, copy it and manage the null terminated version
+            # locally
+            } else {
+                mcs := CString(this[i]);
+                __nullTermStore.append(mcs);
+                prim[i] = mcs.buffer;
+            }
+        }
+        prim[size] = null;
+        return prim;
+    }
+
+    uint __countBytes() {
+        uint total;
+        for (elem :in this)
+            total += elem.size;
+        return total;
+    }
+    
+    ## Join all of the elements into a single string with elements separated 
+    ## by 'sep'
+    String join(String sep) {
+        
+        # deal with the empty case
+        size := count();
+        if (!size)
+            return '';
+        
+        # figure out how much space we need
+        total := __countBytes() + sep.size * (size - 1);
+        
+        AppendBuffer buf = {total};
+        first := true;
+        for (elem :in this) {
+        
+            # add the separator for everything but the first string.
+            if (first)
+                first = false;
+            else
+                buf.extend(sep);
+
+            buf.extend(elem);
+        }
+        
+        return String(buf, true);
+    }
+        
+}
+
+## Split the string into an array of words delimited by one or more of the 
+## given array of bytes.  For example, split('foo-bar/.baz', '-./') would 
+## return ['foo', 'bar', 'baz'].
+StringArray split(String val, String delims) {
+
+    # rule out the simple case
+    if (val.size == 0)
+        return StringArray![''];
+
+    # set to true if we are currently in a block of non-whitespace characters
+    bool inWord = true;
+    
+    # figure out how big we need to make the array
+    uint count = 1;
+    for (uint i = 0; i < val.size; ++i) {
+        cur := val[i];
+        if (delims.lfind(cur) != -1) {
+            inWord = !inWord;
+            if (inWord)
+                ++count;
+        }
+    }
+    if (!inWord) ++count;
+
+    result := StringArray(count);
+    
+    # do it again, this time create substrings
+    int start = 0;
+    inWord = true;
+    for (int i = 0; i < val.size; ++i) {
+        cur := val[i];
+        gotSpace := delims.lfind(cur) != -1;
+        if (gotSpace && inWord) {
+            word := val.slice(start, i);
+            result.append(word);
+            inWord = false;
+        } else if (!gotSpace && !inWord) {
+            # first non-space character after a block of whitespace, reset start
+            start = i;
+            inWord = true;
+        }
+    }
+
+    # add the last word
+    if (inWord)
+        result.append(val.slice(start));
+    else
+        result.append('');
+
+    return result;
+}
+
+## Split the string into an array of words delimited by the given byte.
+StringArray split(String val, byte c) {
+    return split(val, String(byteptr(array[byte]![c]), 1, true));
+}
+
+## Pads a string with the provided bytes so it has the given width
+String ljust(String text, uint width, byte c){
+    if (text.size >= width) return text;
+    return text + String(width - text.size, c);
+}
+
+## Pads a string with spaces so it has the given width
+String ljust(String text, uint width){
+    return ljust(text, width, b' ');
+}
+
+## Prepends a string with the provided bytes so it has the given width
+String rjust(String text, uint width, byte c){
+    if (text.size >= width) return text;
+    return String(width - text.size, c) + text ;
+}
+
+## Prepends string with spaces so it has the given width
+String rjust(String text, uint width){
+    return  rjust(text, width, b' ');
+}
+
+## Centers string with the provided bytes so it has the given width
+String center(String text, uint width, byte c){
+    if (text.size >= width) return text;
+    sWidth := width - text.size;
+    lwidth := sWidth/2;
+    rwidth := sWidth/2 + sWidth%2;
+    return String(lwidth, c) + text + String(rwidth, c);
+}
+
+## Centers string with spaces so it has the given width
+String center(String text, uint width){
+    return  center(text, width, b' ');
+}
+
+## Creates a new string with all occurences of one character replaced
+## with another
+String replace(String text, byte orig, byte new){
+    newString := String(text);
+    newBuf := newString.buffer; 
+    for (uint i = 0; i < text.size; i++)
+        if (newBuf[i] == orig)
+            newBuf[i] = new;
+    return newString;
+}
+
+## Creates a new string with all occurences of the characters in the first
+## array replaced with the corresponding charecters in the second  array
+String replace(String text, Array[byte] orig, Array[byte] new){
+    newString := String(text);
+    newBuf := newString.buffer; 
+    
+    if (orig.count() != new.count())
+        throw InvalidArgumentError("Length of original and new character arrays must match");
+
+    for (uint j = 0; j < orig.count(); j++)
+        for (uint i = 0; i < text.size; i++)
+            if (newBuf[i] == orig[j])
+                newBuf[i] = new[j];
+    return newString;
+}
+
+## Deletes any occurence of the given charecter in a string
+String remove(String text, byte find){
+    oldBuf := text.buffer;
+    newString := String(text);
+    newBuf := newString.buffer; 
+
+    uint newSize = 0;
+    for (uint i = 0; i < text.size; i++){
+        if (oldBuf[i] != find){
+            newBuf[newSize] = oldBuf[i];
+            newSize++;
+        }
+    }
+    newString.size = newSize;
+    return newString
+}

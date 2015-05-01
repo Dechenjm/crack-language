@@ -1,0 +1,343 @@
+## Copyright 2011-2013 Google Inc.
+## Copyright 2011-2013 Conrad Steenberg <conrad.steenberg@gmail.com>
+## 
+##   This Source Code Form is subject to the terms of the Mozilla Public
+##   License, v. 2.0. If a copy of the MPL was not distributed with this
+##   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+## 
+## Module for manipulating ascii stirngs.
+
+import crack.io cout, FStr;
+import crack.lang AppendBuffer, Buffer, InvalidArgumentError, ManagedBuffer;
+import crack.strutil split, StringArray;
+
+@import crack.ann define;
+ 
+## Returns the number converted to a string in the specified base - e.g. 
+## radix(26, 16) -> '1a'
+String radix(uintz val, uint base) {
+    const SIZE := 20;
+    ManagedBuffer tempBuf = {SIZE};
+    byteptr cur = tempBuf.buffer + SIZE + -1;
+    cur[0] = 0;
+    cur = cur + -1;
+    uint size;
+    
+    if (!val) {
+        cur += -1;
+        cur[0] = b'0';
+        size = 1;
+    } else {
+        while (val) {
+            cur += -1;
+            b := byte(val % base);
+            if (b < 10)
+                b += b'0';
+            else
+                b += b'a' - byte(10);
+            cur[0] = b;
+            val = val / base;
+            ++size;
+        }
+    }
+    return String(cur, size, false);
+}
+
+## Returns a hexadecimal representation of the bytes in the given buffer
+## hex("hello") -> '68656c6c6f'
+String hex(Buffer buf) {
+    d := String(buf.size * 2, b'0');
+    uint j = 0;
+    abt := buf.buffer;
+    dbt := d.buffer;
+    byte bt1, bt2;
+
+    for (uint i=0; i < buf.size; i++) {
+        bt1 = abt[i] >> 4;
+        bt2 = abt[i] & 0x0f;
+        dbt[j] = bt1 < 10 ? bt1 + b'0' : bt1 + b'a' - byte(10);
+        dbt[j+1] = bt2 < 10 ? bt2 + b'0' : bt2 + b'a' - byte(10);
+        j+=2;
+    }
+    return d;
+}
+
+
+## Returns a binary buffer from a hex string representation. The reverse of
+## the hex() function
+## bin('68656c6c6f') -> 'hello'
+
+@define _h2b(bt) {
+    (bt >= b'0' && bt <= b'9' ? (bt - b'0') :
+     (bt >= b'a' && bt <= b'f' ? (bt - b'a' + byte(10)) :
+      (bt >= b'A' && bt <= b'F' ? (bt - b'A' + byte(10)) : 0 )
+      )
+     )
+}
+
+ManagedBuffer bin(Buffer hx) {
+    ManagedBuffer data = null;
+    if (hx is null) return data;
+
+    bool even = hx.size % 2 == 0 ? true : false;
+    data = ManagedBuffer(hx.size/2 + hx.size % 2);
+    data.size = data.cap;
+    outbuf := data.buffer;
+    inbuf := hx.buffer;
+    byte bt1 = 0;
+
+    for (uint i = 0; i < hx.size; i++) {
+        if (even) {
+            bt1 += @_h2b(inbuf[i]) << 4;
+            even = false;
+        } else {
+            bt1 += @_h2b(inbuf[i]);
+            outbuf[i/2] = bt1;
+            bt1 = 0;
+            even = true;
+        }
+    }
+    return data;
+}
+
+## Returns a string representation of fraction n / 10^denomExp suitable for
+## use after the decimal point in a formatted floating point number.  For
+## example, where n = 120 and denomExp = 4 (120 / 10,000), this  would
+## return "012". Trailing zeroes are not part of the result because they are
+## not significant, leading zeroes are added because they are.
+String fract10(int32 n, uint denomExp) {
+    if (!n) {
+        return '0';
+    }
+
+    # create a null-terminated managed buffer (size is denomExp + 1 for the
+    # null terminator)
+    ManagedBuffer buf = {denomExp + 1};
+    byteptr back = buf.buffer + denomExp + 1;
+    back += -1; back[0] = 0;
+
+    # counts the number of digits that we've traversed
+    int digits;
+
+    # true if we've traversed a non-zero digit (indicating that the
+    # remaining digits must be displayed)
+    bool significant;
+
+    while (n) {
+        dig := n % 10;
+        n /= 10;
+        if (!significant) significant = dig;
+        ++digits;
+        if (digits > denomExp)
+            throw InvalidArgumentError(FStr() `Value $n is > 10^$denomExp`);
+
+        if (significant) {
+            back += -1; back[0] = byte(dig + b'0');
+        }
+    }
+
+    # write out the remaining digits of precision as zeroes
+    while (digits++ < denomExp) {
+        back += -1; back[0] = b'0';
+    }
+
+    return String(back);
+}
+
+# generates parse functions for both signed and unsigned varieties of a type.
+@define parseInteger(type, suffix) {
+    u$$type parseU$$suffix(Buffer b) {
+        u$$type val;
+        p := b.buffer;
+        remaining := b.size;
+        while (remaining && p[0] <= b'9' && p[0] >= b'0') {
+            val = val * 10 + p[0] - b'0';
+            p += 1;
+            --remaining;
+        }
+
+        return val;
+    }
+
+    type parse$$suffix(Buffer b) {
+        if (b[0] == b'-')
+            return -type(parseU$$suffix(Buffer(b.buffer + 1, b.size - 1)));
+        else
+            return type(parseU$$suffix(b));
+    }
+}
+
+# generate signed and unsigned versions of the parseInt functions.
+@parseInteger(int, Int);
+@parseInteger(intz, Intz);
+@parseInteger(int32, Int32);
+@parseInteger(int64, Int64);
+
+## Parse a boolean
+bool parseBool(Buffer rep) {
+    if (rep.size == 1){
+      if (rep[0] == b't' || rep[0] == b'T'|| rep[0] == b'1')
+        return true;
+      else return false
+    }
+
+    if (rep.size == 4){
+      if ((rep[0] == b't' || rep[0] == b'T') &&
+          (rep[1] == b'r' || rep[1] == b'R') &&
+          (rep[2] == b'u' || rep[2] == b'U') &&
+          (rep[3] == b'e' || rep[3] == b'E'))  
+        return true;
+    }
+    return false;
+}
+
+String _changeCase(String text, byte lowerBound, byte upperBound, 
+                   byte newOffset, 
+                   uint num
+                   )
+{
+    oldBuf := text.buffer;
+    ManagedBuffer newVal = {text.size};
+    newBuf := newVal.buffer;
+    byte c;
+
+    for (uint i = 0; i < num && i < text.size; i++){
+        c = oldBuf[i];
+        if (c >= lowerBound && c <= upperBound){
+            byte offset = c - lowerBound;
+            newBuf[i] = newOffset + offset;
+        } else {
+            newBuf[i] = c;
+        }
+    }
+
+    newVal.size = text.size;
+    return String(newVal, true);
+}
+
+## Change all characters in a string to uppercase
+String toUpper(String text){
+    return _changeCase(text, b'a', b'z', b'A', text.size);
+}
+
+## Change all characters in a string to lowercase
+String toLower(String text){
+    return _changeCase(text, b'A', b'Z', b'a', text.size);
+}
+
+## Split the string into an array of words delimited by a sequence of 
+## ascii whitespace characters.
+StringArray wsplit(String val) {
+    return split(val, ' \t\n\r');
+}
+
+## Capitalize the initial character of numWords words in a string
+## XXX this fails to preserve interspersed whitespace.
+String capitalize(String text, uint numWords){
+    StringArray words = wsplit(text);
+    byteptr wordBuf,wordBufCopy;
+
+    for (uint i = 0; i < words.count() && i < numWords; i++){
+        wordBuf = words[i].buffer;
+        if (words[i].size > 0 && wordBuf[0] >= b'a' && wordBuf[0] <= b'z'){
+            words[i] = String(words[i]); // copy string since we're going to modify it
+            words[i].buffer[0] = b'A' + (wordBuf[0] - b'a');
+        }
+    }
+
+    return words.join(' ');
+}
+
+## Capitalize the initial character of all words in a string
+String capitalize(String text){
+    return capitalize(text, text.size);
+}
+
+## Returns true if 'ch' is a whitespace character.
+bool isSpace(byte ch) {
+    return ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r';
+}
+
+## Returns true if the entire string is whitespace or if the string is empty.
+bool isSpace(String text) {
+    for (int i = 0; i < text.size; ++i) {
+        byte ch = text[i];
+        if (ch != b' ' && ch != b'\t' && ch != b'\n' && ch != b'\r')
+            return false;
+    }
+    return true;
+}
+
+## Returns true if the byte is a digit.
+bool isDigit(byte b) {
+    return b >= b'0' && b <= b'9';
+}
+
+## Returns true if the byte is a digit.
+bool isHexDigit(byte b) {
+    return b >= b'0' && b <= b'9' ||
+           b >= b'A' && b <= b'Z' ||
+           b >= b'a' && b <= b'z';
+}
+
+## Strip trailing and leading whitespace off a string.
+String strip(String text) {
+    int start, end;
+    for (start = 0; start < text.size && isSpace(text[start]); ++start);
+    
+    # if the string is entirely whitespace, return the empty string
+    if (start == text.size)
+        return '';
+    
+    # we can now assume that the string is at least one character, find the 
+    # last non-whitespace character.
+    for (end = text.size - 1; isSpace(text[end]); --end);
+    
+    # 'end' is now the last non-whitespace character, slice the string after 
+    # that.
+    return text.slice(start, end + 1);
+}
+
+String escape(Buffer data, byte min, byte max) {
+    AppendBuffer buf = {data.size + 2};
+    byte ch;
+
+    for (uint i = 0; i < data.size; ++i) {
+        ch = data.buffer[i];
+        if (uint(ch) >= min && uint(ch) <= max) {
+            buf.append(ch);
+        } else if (ch == b'"' || ch == b'\\') {
+            buf.append(b'\\');
+            buf.append(ch);
+        } else if (ch == b'\n') {
+            buf.append(b'\\');
+            buf.append(b'n');
+        } else if (ch == b'\t') {
+            buf.append(b'\\');
+            buf.append(b't');
+        } else if (ch == 12) { // FF
+            buf.append(b'\\');
+            buf.append(b'f');
+        } else if (ch == b'\r') {
+            buf.append(b'\\');
+            buf.append(b'r');
+        } else if (ch == b'/') {
+            buf.append(b'\\');
+            buf.append(b'/');
+        } else if (ch == 8) { // BS
+            buf.append(b'\\');
+            buf.append(b'b');
+        } else {
+            buf.append(b'\\');
+            buf.append(b'0' + (ch >> 6));
+            buf.append(b'0' + ((ch & 56) >> 3));
+            buf.append(b'0' + (ch & 7));
+        }
+    }
+
+  return String(buf, true);
+}
+
+String escape(Buffer data) {
+  return escape(data, 32, 127);
+}

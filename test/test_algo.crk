@@ -1,0 +1,112 @@
+// test algorithms
+// Copyright 2010-2011 Google Inc.
+// Copyright 2010-2011 Shannon Weyrick <weyrick@mozek.us>
+// Copyright 2011 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+import crack.algorithm QuickSort, QuickSortPrim, InsertionSort, 
+    InsertionSortPrim, HeapPrim, Heap, HeapSortPrim, HeapSort;
+import crack.cont.array Array;
+import crack.io cout, FStr;
+import crack.runtime random;
+
+Array[uint] newRandomArray(uint n) {
+    a := Array[uint](n);
+    for (i := 0; i < n; ++i)
+        a.append(random());
+    return a;
+}
+
+class CheckerPrim[SeqT] {
+    @static void check(SeqT a, uintz count) {
+        typeof(a[0]) last;
+        for (i := 0; i < count; ++i) {
+            if (last > a[i])
+                cout `fail: $i, $(a[i]) < $last\n`;
+            last = a[i];
+        }
+    }
+}
+
+
+class Checker[SeqT] {
+    @static void check(SeqT a) {
+        typeof(a[0]) last;
+        for (i := 0; i < a.count(); ++i) {
+            if (last > a[i])
+                cout `fail: $i, $(a[i]) < $last\n`;
+            last = a[i];
+        }
+    }
+}
+
+class Printer[SeqT] {
+    @static void print(SeqT a) {
+        for (i := 0; i < a.count(); ++i) {
+            cout `$i: $(a[i])\n`;
+        }
+    }
+}
+
+
+////////////////////////////////
+
+uint nsize = 500;
+
+// QUICKSORT
+a := newRandomArray(nsize);
+QuickSort[Array[uint]].sort(a);
+Checker[Array[uint]].check(a);
+
+// INSERTION SORT
+c := newRandomArray(nsize);
+InsertionSort[Array[uint]].sort(c);
+Checker[Array[uint]].check(c);
+
+// ARRAY IN PLACE
+b := newRandomArray(nsize);
+b.sort();
+Checker[Array[uint]].check(b);
+
+// Try to sort zero-length collections
+a = Array[uint]();
+QuickSort[Array[uint]].sort(a);
+InsertionSort[Array[uint]].sort(a);
+a.sort();
+
+sA := Array[String]!['some', 'string', 'on', 'crack'];
+sA.sort();
+FStr sWriter = {};
+stringRepr := FStr() `$sA`;
+if (stringRepr != '[crack, on, some, string]')
+   cout `String Array sort/writeTo method failed\n`;
+
+// HEAPS
+d := newRandomArray(nsize);
+Heap[Array[uint]].buildMaxHeap(d);
+if (!Heap[Array[uint]].isMaxHeap(d)) {
+   Printer[Array[uint]].print(d);
+   cout `max heap build fail\n`;
+}
+
+HeapSort[Array[uint]].sort(d);
+Checker[Array[uint]].check(d);
+
+// SORTING PRIMITIVES
+sA2 := array[int]![0, 3, 2, 1];
+InsertionSortPrim[array[int]].sort(sA2, 4);
+CheckerPrim[array[int]].check(sA2, 4);
+
+sI2 := array[uint]![3, 2, 1, 0];
+QuickSortPrim[array[uint]].sort(sI2, 4);
+CheckerPrim[array[uint]].check(sI2, 4);
+
+sH2 := array[uint]![3, 2, 1, 0];
+HeapSortPrim[array[uint]].sort(sH2, 4);
+CheckerPrim[array[uint]].check(sH2, 4);
+
+cout `ok\n`;

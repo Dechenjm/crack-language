@@ -1,0 +1,145 @@
+%%TEST%%
+functors
+%%ARGS%%
+%%FILE%%
+import crack.io cout;
+import crack.functor Functor0, Functor1, Functor2, Functor3, Functor4,
+    Functor5, Function0, Function1, Function2, Function3, Function4, Function5;
+@import crack.ann impl;
+
+if (true) {
+    class F @impl Functor0[void] {
+        bool called;
+        void oper call() {
+            called = true;
+        }
+    }
+    Functor0[void] ftor = f := F();
+    ftor();
+    if (!f.called)
+        cout `FAILED Functor0\n`;
+}
+
+if (true) {
+    class F @impl Functor1[void, int] {
+        bool called;
+        void oper call(int val) {
+            called = val > 1;
+        }
+    }
+    Functor1[void, int] ftor = f := F();
+    ftor(2);
+    if (!f.called)
+        cout `FAILED Functor1\n`;
+}
+
+if (true) {
+    class F @impl Functor2[void, int, String] {
+        bool called;
+        void oper call(int val1, String val2) {
+            called = val1 > 1 && val2 == 'foo';
+        }
+    }
+    Functor2[void, int, String] ftor = f := F();
+    ftor(2, 'foo');
+    if (!f.called)
+        cout `FAILED Functor2\n`;
+}
+
+class A {}
+class B {}
+class C {}
+
+if (true) {
+    class F @impl Functor3[void, int, String, A] {
+        bool called;
+        void oper call(int val1, String val2, A val3) {
+            called = val1 > 1 && val2 == 'foo' && val3;
+        }
+    }
+    Functor3[void, int, String, A] ftor = f := F();
+    ftor(2, 'foo', A());
+    if (!f.called)
+        cout `FAILED Functor3\n`;
+}
+
+if (true) {
+    class F @impl Functor4[void, int, String, A, B] {
+        bool called;
+        void oper call(int val1, String val2, A val3, B val4) {
+            called = val1 > 1 && val2 == 'foo' && val3 && val4;
+        }
+    }
+    Functor4[void, int, String, A, B] ftor = f := F();
+    ftor(2, 'foo', A(), B());
+    if (!f.called)
+        cout `FAILED Functor4\n`;
+}
+
+if (true) {
+    class F @impl Functor5[void, int, String, A, B, C] {
+        bool called;
+        void oper call(int val1, String val2, A val3, B val4, C val5) {
+            called = val1 > 1 && val2 == 'foo' && val3 && val4 && val5;
+        }
+    }
+    Functor5[void, int, String, A, B, C] ftor = f := F();
+    ftor(2, 'foo', A(), B(), C());
+    if (!f.called)
+        cout `FAILED Functor5\n`;
+}
+
+if (true) {
+    bool called;
+    void f() { called = true; }
+    Functor0[void] g = Function0[void](f);
+    g();
+    if (!called)
+        cout `FAILED Function0\n`;
+}
+
+if (true) {
+    bool called;
+    int f(A a) { called = true; return 100; }
+    Functor1[int, A] g = Function1[int, A](f);
+    if (g(A()) != 100 || !called)
+        cout `FAILED Function1\n`;
+}
+
+if (true) {
+    bool called;
+    int f(A a, B b) { called = true; return 100; }
+    Functor2[int, A, B] g = Function2[int, A, B](f);
+    if (g(A(), B()) != 100 || !called)
+        cout `FAILED Function2\n`;
+}
+
+if (true) {
+    bool called;
+    int f(A a, B b, C c) { called = true; return 100; }
+    Functor3[int, A, B, C] g = Function3[int, A, B, C](f);
+    if (g(A(), B(), C()) != 100 || !called)
+        cout `FAILED Function3\n`;
+}
+
+if (true) {
+    bool called;
+    int f(A a, B b, C c, String d) { called = true; return 100; }
+    Functor4[int, A, B, C, String] g = Function4[int, A, B, C, String](f);
+    if (g(A(), B(), C(), 'test') != 100 || !called)
+        cout `FAILED Function4\n`;
+}
+
+if (true) {
+    bool called;
+    int f(A a, B b, C c, String d, float e) { called = true; return 100; }
+    Functor5[int, A, B, C, String, float] g =
+        Function5[int, A, B, C, String, float](f);
+    if (g(A(), B(), C(), 'test', 1.0) != 100 || !called)
+        cout `FAILED Function5\n`;
+}
+
+cout `ok\n`;
+%%EXPECT%%
+ok
+%%STDIN%%

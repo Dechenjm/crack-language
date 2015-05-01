@@ -1,0 +1,191 @@
+// Classes for interfaces files
+// Copyright 2010-2011 Google Inc.
+// Copyright 2010-2011 Shannon Weyrick <weyrick@mozek.us>
+// Copyright 2010-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+import crack.io cout, FStr, StandardFormatter, Writer, FDReader, FDWriter;
+import crack.lang die, Buffer, Exception, FreeBase, SubString, CString,
+    WriteBuffer, Formatter;
+import crack.io.readers LineReader;
+import crack.sys strerror;
+
+@import crack.ann implements;
+
+import crack.runtime fopen, fclose, fileno, fnmatch, basename, dirname, CFile,
+    is_file;
+
+class FileInfo: Object {
+
+    String name;
+
+    oper init(String name): name(name) { }
+    oper init(byteptr name): name(name) { }
+
+    bool matches(String pattern) {
+        return (fnmatch(CString(pattern).buffer, CString(name).buffer) == 0);
+    }
+
+    void formatTo(Formatter fmt) {
+        fmt.format(name);
+    }
+
+    bool exists() {
+        return is_file(CString(name).buffer);
+    }
+
+    String basename(bool stripExtension) {
+        path := CString(name); // copies for null termination
+        bname := String(basename(path.buffer)); // copies again
+        if (stripExtension) {
+            pos := bname.rfind(0x2e); // '.' (dot)
+            if (pos == -1)
+                return bname;
+            else
+                return SubString(bname, 0, uint(pos));
+        }
+        else {
+            return bname;
+        }
+    }
+
+    String dirname() {
+        path := CString(name); // copies for null termination
+        return String(dirname(path.buffer)); // copies again
+    }
+
+
+}
+
+// no memory management
+class Openable: VTableBase {
+
+    bool _isValid = false; // implies isOpened
+    bool _isOpened = false;
+
+    void _open() { }
+
+    bool isValid() {
+        if (!_isOpened)
+            _open();
+        return _isValid;
+    }
+
+    bool isOpened() { return _isOpened; }
+
+}
+
+byte F_READ  = b'r';
+byte F_WRITE = b'w';
+byte F_APPEND = b'a';
+
+class File : FileInfo,
+             Openable
+             @implements Writer {
+
+    CString _mode;
+    CFile _fd;
+    LineReader _lReader;
+    FDReader _reader;
+    FDWriter _writer;
+
+    void _open() {
+
+        n := CString(name);
+        _fd = fopen(n.buffer, _mode.buffer);
+        if (_fd is null) {
+            _isOpened = false;
+            throw Exception(FStr() `$name: $(strerror())`);
+        }
+
+        _isOpened = true;
+
+    }
+
+    void _initRead() {
+
+        _open();
+        _reader = FDReader(fileno(_fd));
+        _lReader = LineReader(_reader);
+        _isValid = true;
+
+    }
+
+    void _initWrite() {
+        _open();
+        _writer = FDWriter(fileno(_fd));
+        _isValid = true;
+    }
+
+    String nextLine() {
+
+        if (_lReader is null || !_isValid)
+            return null;
+
+        return _lReader.readLine();
+
+    }
+
+    uint read(WriteBuffer buf){
+        return _reader.read(buf);
+    }
+
+    FDReader reader(){
+        return _reader;
+    }
+
+    void write(Buffer data) {
+
+        if (_writer is null || !_isValid)
+            return;
+
+        _writer.write(data);
+
+    }
+
+    void write(byteptr data) {
+
+        if (_writer is null || !_isValid)
+            return;
+
+        _writer.write(data);
+
+    }
+
+    void close() {
+        if (_isOpened) {
+            fclose(_fd);
+            _isOpened = false;
+        }
+    }
+
+    oper del() {
+        if (_isOpened)
+            close();
+    }
+
+    oper init(String name, String mode): FileInfo(name),
+                                         _mode(mode) {
+
+        // parse file mode
+        if (_mode.size != 1 ||
+            ((_mode[0] != F_READ) &&
+             (_mode[0] != F_WRITE) &&
+             (_mode[0] != F_APPEND)))
+            throw Exception(
+                FStr() I`$name: invalid file mode "$_mode", must be one of \
+                         "r", "w" or "a"`
+            );
+
+        if (_mode[0] == F_READ)
+            _initRead();
+        else
+            _initWrite();
+
+    }
+
+}

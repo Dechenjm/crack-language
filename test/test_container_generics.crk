@@ -1,0 +1,676 @@
+# Copyright 2010-2012 Google Inc.
+# Copyright 2011 Shannon Weyrick <weyrick@mozek.us>
+# Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+import crack.lang cmp, die, free, IndexError;
+import crack.runtime random;
+import crack.io cout, FStr, StringFormatter;
+import crack.cont.array Array;
+import crack.cont.treemap TreeMap;
+import crack.cont.list List, DList;
+import crack.cont.hashmap HashMap;
+import crack.cont.priorityqueue PriorityQueue;
+import crack.algorithm QuickSort;
+@import crack.ann define;
+
+TreeMap[String, int] m = {};
+m['first'] = 100;
+m['second'] = 200;
+m['third'] = 300;
+m['fourth'] = 400;
+if (m['first'] != 100 || m['second'] != 200)
+    cout `failed TreeMap access\n`;
+
+if (!m)
+    cout `FAILED: non-empty TreeMap is not true\n`;
+
+if (TreeMap[String, int]())
+    cout `FAILED: empty TreeMap is not false\n`;
+
+if (m.get('undefined', 100) != 100)
+    cout `FAILED: default keys don't work\n`;
+
+if (m.get('first', -1) != 100)
+    cout `FAILED: default values on defined keys don't work\n`;
+
+if (!m.hasKey('first'))
+    cout `FAILED: hasKey() fails on an element\n`;
+if (m.hasKey('bogus'))
+    cout `FAILED: hasKey() fails on a non-element\n`;
+
+Array[String] sa = {};
+
+for (item :in m) {
+    StringFormatter fmt = {};
+    fmt `$(item.key): $(item.val)`;
+    sa.append(fmt.string());
+}
+
+# TreeMap.delete()
+if (1) {
+    TreeMap[String, int] t = {};
+
+    t['a'] = 1;
+    t['b'] = 2;
+    t['c'] = 3;
+    
+    t.delete('b');
+    if (FStr() `$t` != '[a: 1, c: 3]')
+        cout `FAILED deleting root node\n`;
+}
+
+# TreeMap.clear()
+if (1) {
+    TreeMap[String, int] t = {};
+    t['a'] = 1;
+    t['b'] = 2;
+    
+    t.clear();
+    if (FStr() `$t` != '[]')
+        cout `FAILED clearing tree\n`;
+    
+    t['a'] = 10;
+    if (FStr() `$t` != '[a: 10]')
+        cout `FAILED adding new values to cleared tree.\n`;
+}
+
+QuickSort[Array[String]].sort(sa);
+
+# Now sa = [first: 100, fourth: 400, second: 200, third: 300]
+
+if (!sa)
+    cout `FAILED: non-empty array is not true\n`;
+
+if (Array[String]())
+    cout `FAILED: empty array is not false\n`;
+
+if (sa[0] != 'first: 100' || sa[1] != 'fourth: 400')
+    cout `string array or iteration failed\n`;
+
+# verify that iterators lock the tree
+if (1) {
+    TreeMap[String, int] leakTree() {
+        temp := m;
+        m = null;
+        return temp;
+    }
+
+    StringFormatter fmt = {};
+    for (i :in leakTree()) fmt `$(i.key)`;
+    result := fmt.string();
+    if (result != 'firstfourthsecondthird')
+        cout `FAILED tree locking, got $result\n`;
+}
+
+# test negative indexing
+if (true) {
+    Array[String] a = ['first', 'second', 'wrong'];
+    if (a[-1] != 'wrong')
+        cout `FAILED array negative indexing\n`;
+    a[-1] = 'third';
+    if (a != Array[String]!['first', 'second', 'third'])
+        cout `FAILED array negative index assignment\n`;
+}
+
+#  test subarray
+sub := sa.subarray(1);
+if (sub[1] != 'second: 200' || sub[2] != 'third: 300' || sub[0] != 'fourth: 400')
+    cout `string array subarray  1 failed, got '$sub'\n`;
+
+if (sub.count() != 3) 
+   cout `string array subarray failed, length $(sub.count()) != 3\n`;
+
+# 2 arguments: start, len
+sub = sa.subarray(1, 1);
+if (sub[0] != 'fourth: 400')
+    cout `string array subarray 2 failed, got '$sub'\n`;
+
+if (sub.count() != 1) 
+   cout `string array subarray failed, length $(sub.count()) != 1\n`;
+
+sub = sa.subarray(1);
+if (sub[1] != 'second: 200' || sub[2] != 'third: 300' || sub[0] != 'fourth: 400')
+    cout `string array subarray 3 failed, got '$sub'\n`;
+
+# array slice
+sub = sa.slice(1, 3);
+if (sub.count() != 2) 
+   cout `string array subarray failed, length $(sub.count()) != 3\n`;
+
+if (sub[1] != 'second: 200' || sub[0] != 'fourth: 400')
+    cout `string array slice 1 failed, got '$sub)'\n`;
+
+sub = sa.slice(1, 2);
+if (sub.count() != 1) 
+   cout `string array slice failed, length $(sub.count()) != 2\n`;
+
+if (sub[0] != 'fourth: 400')
+    cout `string array slice 2 failed, got '$sub'\n`;
+
+testA :=Array[String]!['bogus', 'test', 'array'];
+if (testA[0] != 'bogus' || testA[1] != 'test' || testA[2] != 'array')
+   cout `string array ! notation failed, got $testA\n`;
+
+intA := Array[int]![1,2,3,4,5,6,7,8,9,0];
+stringA := Array[String]!["bogus", "test", "string"];
+
+intRepr:=FStr() `$intA`;
+stringRepr:=FStr() `$stringA`;
+
+if (intRepr != '[1, 2, 3, 4, 5, 6, 7, 8, 9, 0]')
+    cout `Array[int].formatTo failed\n`;
+if (stringRepr != '[bogus, test, string]')
+    cout `Array[String].formatTo failed\n`;
+
+# array delete
+if (true) {
+    Array[int] arr = [1, 2, 3, 4, 5, 6, 8, 9, 10];
+    arr.delete(0);
+    if (arr != Array[int]![2, 3, 4, 5, 6, 8, 9, 10])
+        cout `FAILED delete of first value\n`;
+    arr.delete(-1);
+    if (arr != Array[int]![2, 3, 4, 5, 6, 8, 9])
+        cout `FAILED delete of last value\n`;
+    try {
+        arr.delete(-8);
+        cout `FAILED to get exception while deleting negative OOB value.\n`;
+    } catch (IndexError ex) {
+    }
+    try {
+        arr.delete(7);
+        cout `FAILED to get exception while deleting positive OOB value.\n`;
+    } catch (IndexError ex) {
+    }
+    arr.delete(-7);
+    if (arr != Array[int]![3, 4, 5, 6, 8, 9])
+        cout `FAILED delete of first value, negatively indexed\n`;
+}
+
+# Test array comparison
+Array[int] N = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+Array[int] N2 = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+
+if (N == N2)
+    cout `Array[int].cmp failed\n`;
+
+if (!(Array[int]![1, 2, 3, 4] > Array[int]![1, 2, 3]))
+    cout `FAILED Array[int] comparison of a longer array to a shorter array\n`;
+
+if (!(Array[int]![1, 2, 3] < Array[int]![1, 2, 3, 4]))
+    cout `FAILED Array[int] comparison of a shorter array to a longer array\n`;
+
+if (Array[int]![1, 2, 3] != Array[int]![1, 2, 3])
+    cout `FAILED comparison of equivalent arrays\n`;
+
+# test array insertion
+if (true) {
+    Array[int] arr = [1, 2, 3, 4, 5];
+    arr.insert(0, 0);
+    arr.insert(6, 6);
+    arr.insert(3, 30);
+    if (arr != Array[int]![0, 1, 2, 30, 3, 4, 5, 6])
+        cout `FAILED array insertion\n`;
+    
+    arr.insert(-1, 7);
+    if (arr != Array[int]![0, 1, 2, 30, 3, 4, 5, 7, 6])
+        cout `FAILED array negative index insertion\n`;
+    arr.insert(-9, -1);
+    if (arr != Array[int]![-1, 0, 1, 2, 30, 3, 4, 5, 7, 6])
+        cout `FAILED array negative index insertion at beginning of array\n`;
+    
+    try {
+        arr.insert(-11, -2);
+        cout `FAILED exception on negative insert before beginning.\n`;
+    } catch (IndexError ex) {
+    }
+}
+
+# array cursor insertion
+if (true) {
+    Array[int] arr = [1, 2, 3, 4, 5];
+    i := arr.iter();
+    arr.insert(i, 0);
+    i.next(); i.next(); i.next();
+    arr.insert(i, 30);
+    while (i) i.next();
+    arr.insert(i, 6);
+    if (arr != Array[int]![0, 1, 2, 30, 3, 4, 5, 6])
+        cout `FAILED array insertion\n`;
+}
+
+# test contains()
+if (!stringA.contains('string'))
+    cout `FAILED contains(member) is true\n`;
+if (stringA.contains('non-member'))
+    cout `FAILED contains(non-member is false\n`;
+
+# test map/reduce/filter
+
+int plus(int a){
+    return a + 2;
+}
+
+int minus(int a){
+    return a - 2;
+}
+
+bool gte10(int a){
+    return a >= 10;
+}
+
+int sum(int a, int b){
+    return a + b;
+}
+
+intA.map(plus);
+if (intA != Array[int]![3, 4, 5, 6, 7, 8, 9, 10, 11, 2])
+    cout `Array[int].map failed, got $intRepr\n`;
+intB := intA.mapped(minus);
+
+if (intB != Array[int]![1, 2, 3, 4, 5, 6, 7, 8, 9, 0])
+    cout `Array[int].mapped failed\n`;
+
+intB = intA.sorted();
+intA.sort();
+if (intA != Array[int]![2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    cout `sorted intA failed, got $intA\n`;
+
+if (intA != intB)
+    cout `Array compare/sorted failed, got $intA != $intB\n`;
+
+int reverseCmp(int a, int b) { return b - a; }
+intB = intA.sorted(reverseCmp);
+intA.sort(reverseCmp);
+if (intA != Array[int]![11, 10, 9, 8, 7, 6, 5, 4, 3, 2])
+    cout `sort(fn) failed, got $intA\n`;
+if (intB != intA)
+    cout `sorted(fn) failed, got $intB\n`;
+intA.sort();
+
+intB = intA.filtered(gte10);
+if (intB != Array[int]![10, 11])
+    cout `filter intA failed, got $intB\n`;
+
+intSum := intA.reduce(sum);
+if (intSum != 65)
+    cout `reduce intA failed, got $intSum\n`;
+
+# test String Array  map/reduce/filter
+String plusString(String s){
+    return s + "__END";
+}
+
+String appendString(String s, String t){
+    return s + t;
+}
+
+bool filterString(String s){
+    return s == "test";
+}
+
+stringB := stringA.sorted();
+if (stringB != Array[String]!["bogus", "string", "test"])
+    cout `Array[String] sort failed, got $stringB\n`;
+
+stringC := stringB.mapped(plusString);
+stringB.map(plusString);
+
+if (stringB != Array[String]!["bogus__END", "string__END", "test__END"] || stringB != stringC)
+    cout `Array[String] map failed, got $stringB\n`;
+
+stringB = stringA.filtered(filterString);
+stringC.filter(filterString);
+
+if (stringB != Array[String]!["test"] || stringC != Array[String]![])
+    cout `Array[String] filter failed, got $stringB and $stringC\n`;
+
+rs := stringA.reduce(appendString);
+
+if (rs != "bogusteststring")
+    cout `Array[String] reduce failed, got $rs\n`;
+
+if (1) {
+    bool deleted;
+    class Tracer { oper del() { deleted = true; } }
+    if (1) {
+        Array[Tracer] t = [Tracer()];
+    }
+    
+    if (!deleted)
+        cout `FAILED array cleanup\n`;
+}
+
+if (1) {
+    bool deleted;
+    class Tracer { oper del() { deleted = true; } }
+    if (1) {
+        Array[Tracer] ta = [Tracer()];
+        Tracer t = ta.pop();
+        if (deleted)
+            cout `FAILED pop - deleted too early.`;
+    }
+    
+    if (!deleted)
+        cout `FAILED pop management - object not deleted`;
+}
+
+# test a second invocation (uses a different code path)
+class Foo {}
+Array[Foo];
+
+# test of extend
+if (true) {
+    a := Array[int]![1, 2, 3];
+    b := Array[int]![4, 5, 6];
+    a.extend(b);
+    if (a != Array[int]![1, 2, 3, 4, 5, 6])
+        cout `FAILED extend\n`;
+    if (a.count() != 6)
+        cout `FAILED count after extend\n`;
+}
+
+stringA.clear();
+if (stringA.count() != 0)
+    cout `FAILED clear() count\n`;
+if (stringA != Array[String]![])
+    cout `FAILED clear() equality with empty array\n`;
+
+# --- List tests ---
+
+@define concat(Type) {
+    String concat(Type list) {
+        StringFormatter result = {};
+        for (x :in list)
+            result `$x`;
+        return result.string();
+    }
+}
+
+@concat(List[String]);
+
+List[String] s = {};
+s.append('1');
+s.append('2');
+if (concat(s) != '12' || s.count() != 2)
+    cout `Failed List appends\n`;
+s = List[String]();
+s.pushHead('2');
+s.pushHead('1');
+if (concat(s) != '12' || s.count() != 2)
+    cout `failed List pushHeads\n`;
+
+s.popHead();
+if (concat(s) != '2' || s.count() != 1)
+    cout `failed List popHead\n`;
+s.popHead();
+if (concat(s) != '' || s.count() != 0)
+    cout `failed List popHead on empty list\n`;
+s = List[String]();
+s.insert(0, 'first');
+s.insert(1, 'last');
+s.insert(1, 'middle');
+if (concat(s) != 'firstmiddlelast' || s.count() != 3)
+    cout `failed List inserts\n`;
+s.delete(0);
+if (concat(s) != 'middlelast' || s.count() != 2)
+    cout `failed List delete of first elem\n`;
+s.pushHead('first');
+s.delete(1);
+if (concat(s) != 'firstlast' || s.count() != 2)
+    cout `failed List delete of middle elem\n`;
+s.delete(1);
+if (concat(s) != 'first' || s.count() != 1)
+    cout `failed List delete of last elem\n`;
+
+if (s[0] != 'first')
+    cout `failed List [] access\n`;
+
+if (!List[int]![1])
+    cout `FAILED: non-empty list is not true\n`;
+
+if (List[int]())
+    cout `FAILED: empty list is not false\n`;
+
+@concat(DList[String]);
+
+void checkDList(DList[String] list, String val, uint count, String message) {
+    # make sure that the list is properly terminated
+    revIter := list.iter(true);
+    if (revIter.next())
+        cout `$message: last element has non-null next\n`;
+
+    # verify that the list looks the same forwards as backwards
+    List[String] temp = {};
+    for (revIter = list.iter(true); revIter; revIter.prev())
+        temp.pushHead(revIter.elem());
+    
+    iter := list.iter();
+    listIter := temp.iter();
+    i := 0;
+    while (iter && listIter) {
+        
+        if (iter.elem() != listIter.elem())
+            cout `$message: reverse failure in node -$i, expected \
+$(listIter.elem()), got $(iter.elem())\n`;
+        
+        ++i;
+        listIter.next();
+        iter.next();
+    }
+    
+    # make sure the contents of the list from front to back are what we expect
+    flat := concat(list);
+    if (flat != val)
+        cout `$message: incorrect contents, expected $val, got $flat\n`;
+    if (count != list.count())
+        cout `$message: incorrect count, expected $count, got \
+$(list.count())\n`;
+}
+
+DList[String] dl = {};
+
+dl.append('1');
+dl.append('2');
+checkDList(dl, '12', 2, 'Failed DList appends');
+
+dl = DList[String]();
+dl.pushHead('2');
+dl.pushHead('1');
+checkDList(dl, '12', 2, 'Failed DList pushHeads');
+
+dl.popHead();
+checkDList(dl, '2', 1, 'Failed DList popHead');
+dl.popHead();
+checkDList(dl, '', 0, 'Failed DList popHead on empty list');
+
+dl = DList[String]();
+dl.insert(0, 'first');
+dl.insert(1, 'last');
+dl.insert(1, 'middle');
+checkDList(dl, 'firstmiddlelast', 3, 'failed DList inserts');
+
+dl.delete(0);
+checkDList(dl, 'middlelast', 2, 'failed DList delete of first elem');
+
+dl.pushHead('first');
+dl.delete(1);
+checkDList(dl, 'firstlast', 2, 'failed DList delete of middle elem');
+dl.delete(1);
+checkDList(dl, 'first', 1, 'failed DList delete of last elem');
+dl.delete(0);
+checkDList(dl, '', 0, 'failed DList delete of only elem');
+
+dl.append('elem');
+checkDList(dl, 'elem', 1, 'failed DList append after deleting');
+if (dl[0] != 'elem')
+    cout `failed DList [] access\n`;
+
+dl.append('elem2');
+dl.popTail();
+checkDList(dl, 'elem', 1, 'failed DList append after popTail');
+dl.popTail();
+checkDList(dl, '', 0, 'failed DList append after popTail of last elem');
+
+dl = DList[String]();
+dl.append('1');
+dl.append('2');
+iter := dl.iter();
+dl.insert(iter, '0');
+iter.next(); iter.next();
+dl.insert(iter, '1.5');
+checkDList(dl, '011.52', 4, 'failed DList iterator insert');
+dl.delete(iter);
+iter = dl.iter();
+dl.delete(iter);
+checkDList(dl, '12', 2, 'Failed DList iterator delete');
+dl.delete(iter);
+dl.delete(iter);
+checkDList(dl, '', 0, 'Failed DList iterator delete of last elements');
+
+if (!DList[int]![1])
+    cout `FAILED: non-empty list is not true\n`;
+
+if (DList[int]())
+    cout `FAILED: empty list is not false\n`;
+
+hm := HashMap[String, int]();
+for (int i = 0; i < 100; ++i) {
+    key := FStr() `$i`;
+    hm[key] = i;
+}
+
+if (!hm)
+    cout `FAILED: non-empty HashMap is not true\n`;
+
+if (HashMap[String, int]())
+    cout `FAILED: empty HashMap is not false\n`;
+
+if (hm.get('99', -1) != 99)
+    cout `FAILED: get('99', -1) != 99\n`;
+
+if (hm.get('100', -1) != -1)
+    cout `FAILED: get('100', -1) != -1\n`;
+
+for (int i = 0; i < 100; ++i) {
+    key := FStr() `$i`;
+    if (hm[key] != i)
+        cout `FAILED hash key lookup for $key\n`;
+    hm.delete(key);
+}
+
+if (hm.count() != 0)
+    cout `FAILED hash key count after deletes\n`;
+
+# fuzz test hash map
+if (true) {
+    HashMap[int, int] map = {};
+    Array[int] a = {};
+    int i;
+    while (i < 10000) {
+        action := random() % 3;
+        if (action < 2) {
+            # insert a new random value
+            
+            # find an unused key
+            v := random();
+            while (map.get(v))
+                v = random();
+    
+#            cout `$i: adding $v\n`;
+            map[v] = v;
+            a.append(v);
+        } else if (action == 2 && a.count()) {
+            # delete key
+            index := uint(random()) % a.count();
+#            cout `$i: deleting a[$index]: $(a[index])\n`;
+            map.delete(a[index]);
+            a.delete(index);
+        }
+
+        map.checkConstraints();
+        ++i;
+        
+        # iterate over the map
+        int countedElems;
+        for (x :in map)
+            ++countedElems;
+        if (countedElems != map.count())
+            cout `FAILED counted a different number of elements in a map than\
+expected\n`;
+    }
+}
+
+# priority queue
+PriorityQueue[int] pq = { };
+pq.push(1);
+pq.push(3);
+pq.push(5);
+pq.push(10);
+pq.push(12);
+pq.push(2);
+pq.push(8);
+if (pq.top() != 12)
+    cout `priority queue top() fail\n`;
+int a = pq.pop();
+if (a != 12)
+    cout `priority queue pop() fail\n`;
+a = pq.pop();
+if (a != 10)
+    cout `priority queue pop() fail\n`;
+a = pq.pop();
+if (a != 8)
+    cout `priority queue pop() fail\n`;
+pq.push(50);
+a = pq.pop();
+if (a != 50)
+    cout `priority queue pop() fail\n`;
+
+pq.clear();
+if (pq.count() != 0)
+    cout `priority queue clear() fail\n`;
+
+PriorityQueue[int] pq2 = { };
+if (pq2.pop())
+    cout `null pq pop fail\n`;
+
+class Job {
+    int priority;
+    oper init(int p): priority = p { }
+    int cmp(Object other) {
+        if (this is other || !other.isa(Job)) return 0;
+        else {
+            j := Job.cast(other);
+            return (this.priority > j.priority) ? 1 : -1;
+        }
+    }
+}
+PriorityQueue[Job] pq3 = { };
+pq3.push(Job(5));
+pq3.push(Job(10));
+pq3.push(Job(50));
+pq3.push(Job(20));
+if (pq3.count() != 4)
+    cout `priority queue count() fail\n`;
+j := pq3.pop();
+if (j.priority != 50)
+    cout `priority queue pop() fail (50)\n`;
+j = pq3.pop();
+if (j.priority != 20)
+    cout `priority queue pop() fail (20)\n`;
+j = pq3.pop();
+if (j.priority != 10)
+    cout `priority queue pop() fail (10)\n`;
+j = pq3.pop();
+if (j.priority != 5)
+    cout `priority queue pop() fail (5)\n`;
+j = pq3.pop();
+if (j)
+    cout `priority queue pop() fail (null)\n`;
+
+cout `ok\n`;
+

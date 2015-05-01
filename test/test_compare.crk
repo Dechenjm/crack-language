@@ -1,0 +1,23 @@
+# Copyright 2010 Google Inc.
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# test of string comparison operators.
+
+import crack.io cout;
+a := "first";
+a1 := "first";
+b := 'second';
+if (!(a == a)) cout `failed is check\n`;
+if (!(a == a1)) cout `failed compare\n`;
+if (b < a) cout `failed <\n`;
+if (b <= a) cout `failed <=\n`;
+if (!(a <= a1)) cout `failed a <= a1\n`;
+if (a != a1) cout `failed a != a1\n`;
+if (a >= b) cout `failed a >= b\n`;
+if (!(a >= a1)) cout `failed a >= a1\n`;
+if (a > b) cout `failed a > b\n`;
+cout `ok\n`;
+

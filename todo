@@ -1,0 +1,51 @@
+
+Crack ToDo File & Project Plan
+==============================
+
+Copyright 2009 Google Inc.
+
+-   Allow Class.cast(obj, defaultValue) so you can check-and-cast without 
+    resorting to unsafeCast().
+
+Unassigned
+----------
+
+-   allow explicit operators to be called without the "var." prefix.
+-   implement inheritence from low-level types.
+-   Overrides should not be considered in method resolution order (see manual 
+    on "Method Resolution in Classes")
+
+Roadmap
+-------
+
+for 1.0:
+-   cleanup:
+    -   combine FuncDef and OverloadDef into a base class with a virtual 
+        matches() for arg list defs, or just make FuncDef a smaller thing and 
+        always use OverloadDef
+    -   allowing turning off code generation by replacing the builder with a 
+        "NullBuilder"  NullResultExpr follows:
+            class NullResultExpr : public ResultExpr {
+                public:
+                    // won't work, need a non-null ResultExpr value
+                    NullResultExpr() : ResultExpr(0) {} 
+                    
+                    ResultExprPtr emit(Context &context) {
+                        return this;
+                    }
+            };
+    
+        
+-   doc-comments
+-   first class functions (including overload selection: func[Type1, Type2])
+-   keyword arguments
+-   sequence construction 
+-   type inference
+-   for/in loops
+-   exceptions
+-   minor features
+-   string interpolation expressions: s := `some string $val`;
+-   warn the user when an overload hides an earlier overload (foo(String) 
+    following foo(Object), for example).
+
+

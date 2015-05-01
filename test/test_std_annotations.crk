@@ -1,0 +1,175 @@
+# Copyright 2010-2012 Google Inc.
+#
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+
+import crack.io cout, StringFormatter;
+import crack.cont.array Array;
+@import crack.ann define, interface, impl, implements;
+@import test.testmac foo, bar, tm_concat, tm_stringify;
+
+@define oneHundred() { 100 }
+@define echo(x) { x }
+@define equals(a, b) { (a == b) }
+@define func(name) { int name() { return 300; } }
+@define concat(a, b) { a$$b }
+@define stringify(a) { $a }
+
+if (@oneHundred() != 100)
+    cout `macro with no args failed\n`;
+
+if (@echo(200) != 200)
+    cout `macro with one arg failed\n`;
+
+if (!@equals(1, 1))
+    cout `macro with two args failed\n`;
+
+@func(f);
+if (f() != 300)
+    cout `macro with function definition fails\n`;
+
+int @concat(i, x) = 400;
+if (ix != 400)
+    cout `concatenation failed\n`;
+
+if (@stringify(foo) != 'foo')
+    cout `stringification failed\n`;
+
+if (@stringify((x == 'test')) != "( x == 'test' )")
+    cout `stringification of multi-token value failed.\n`;
+
+@define interp(out, a, b) {
+    (out) `This is $a\n`;
+    (out) `That was $(b)\n`;
+}
+
+StringFormatter result = {};
+String now() { return 'now'; }
+@interp(result, ('then'), now())
+if (result.string() != 'This is then\nThat was now\n')
+    cout `Failed on macros with i-strings\n`;
+
+if (@foo() != 'IAM not a crook')
+    cout `Failed to create a macro by hand\n`;
+
+@bar(Int, int);
+if (Int(100).val != 100)
+    cout `failed to export a macro\n`;
+
+if (@tm_concat(i, x) != 400)
+    cout `failed to export macro with a concatenation\n`;
+
+if (@tm_stringify(boyng) != 'boyng')
+    cout `failed to export a macro with stringification`;
+
+@interface Foo {
+    void do() { cout `Interface base function called\n`; }
+}
+
+class Bar : Object @implements Foo {
+    String y() { return 'nested parens work'; }
+
+    void do() {
+        x := 'interp vars work';
+        result `interfaces work: $x, $(y())`;
+    }
+
+    oper del() { result `Bar deleted`; }
+}
+
+result = StringFormatter();
+Foo b = Bar();
+b.do();
+if (result.string() !=
+    'interfaces work: interp vars work, nested parens work')
+    cout `Failed to implement interface implementation\n`;
+result = StringFormatter();
+b = null;
+if (result.string() != 'Bar deleted')
+    cout `Failed on interface cleanup\n`;
+
+if (true) {
+    result = StringFormatter();
+    class Baz @impl Foo {
+        void do() { result `baz function called` }
+    }
+
+    Foo f = Baz();
+    f.do();
+    if (result.string() != 'baz function called')
+        cout `Failed @impl annotation.`;
+}
+
+if (1) {
+    @interface Gen1[A] { A a; }
+    class Inst1 : Object @implements Gen1[int] {}
+    Inst1 i = {};
+    if (String(typeof(i.a).name) != 'int')
+        cout `FAILED single argument generic interface\n`;
+    @interface Gen2[A, B] { A a; B b; }
+    class Inst2 : Object @implements Gen2[int, float] {}
+    Inst2 i2 = {};
+    if (String(typeof(i2.a).name) != 'int' ||
+        String(typeof(i2.b).name) != 'float'
+        )
+        cout `FAILED double argument generic interface\n`;
+}
+
+# containers of interfaces
+if (1) {
+    @interface I {
+        @abstract void f();
+    }
+
+    int cleanups;
+
+    class A : Object @implements I {
+        int val;
+        oper init(int val) : val = val {}
+        oper del() { cleanups += val; }
+        void f() {}
+    }
+
+    if (1) {
+        Array[I] elems = {};
+        elems.append(A(1));
+        elems.append(A(2));
+        elems.append(A(3));
+    }
+
+    if (cleanups != 6)
+        cout `FAILED cleanups on containers of interfaces.`;
+}
+
+# interface null interface references
+if (1) {
+    @interface I {
+        @abstract void f();
+    }
+
+    # test converting a null to an object.
+    void g(Object o) {}
+    g(null);
+
+    # test bind and release on null.
+    I h() { return null; }
+    I i = h();
+
+    # conversion to bool
+    I j;
+    if (j) cout `FAILED conversion of null interface reference to bool\n`;
+
+    class A : Object @implements I {
+        bool val;
+        oper init(bool val) : val = val {}
+        bool isTrue() { return val; }
+        void f() {}
+    }
+    j = A(true);
+    I k = A(false);
+    if (!j || k) cout `FAILED object bool conversion in interface.\n`;
+}
+
+cout `ok\n`;

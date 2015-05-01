@@ -1,0 +1,221 @@
+// Copyright 2013 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+// Test the _lmdb extension module
+import crack.ascii hex;
+import crack.io cerr, cout, FStr;
+import crack.lang CString, Buffer;
+import crack.random uuid;
+import crack.strutil StringArray;
+import crack.sys exit;
+import crack.runtime errno, free;
+
+
+import crack.ext._lmdb 
+    // Types
+    MDB_cursor, MDB_env, MDB_stat, MDB_txn, MDB_val,
+
+    // Function names
+    mdb_val_new,
+    mdb_env_create,
+    mdb_env_close,
+    mdb_env_set_mapsize,
+    mdb_env_open,
+    mdb_strerror,
+    mdb_env_copy,
+    mdb_env_copyfd,
+    mdb_env_stat,
+    mdb_env_sync,
+    mdb_env_set_flags,
+
+    mdb_env_get_flags,
+    mdb_txn_begin,
+    mdb_txn_env,
+    mdb_txn_commit,
+    mdb_txn_abort,
+    mdb_txn_reset,
+    mdb_txn_renew,
+    mdb_dbi_open,
+    mdb_dbi_close,
+    mdb_drop,
+
+    mdb_get,
+    mdb_put,
+    mdb_del,
+    mdb_cursor_open,
+    mdb_cursor_close,
+    mdb_cursor_renew,
+    mdb_cursor_txn,
+    mdb_cursor_dbi,
+    mdb_cursor_get,
+    mdb_cursor_put,
+
+    mdb_cursor_del,
+    mdb_cursor_count,
+
+// Constants
+    MDB_VERSION_MAJOR, MDB_VERSION_MINOR, MDB_VERSION_PATCH, MDB_FIXEDMAP,
+    MDB_NOSUBDIR, MDB_NOSYNC, MDB_RDONLY, MDB_NOMETASYNC, MDB_WRITEMAP,
+    MDB_MAPASYNC, MDB_NOTLS, MDB_REVERSEKEY, MDB_DUPSORT, MDB_INTEGERKEY,
+    MDB_DUPFIXED, MDB_INTEGERDUP, MDB_REVERSEDUP, MDB_CREATE, MDB_NOOVERWRITE,
+    MDB_NODUPDATA, MDB_CURRENT, MDB_RESERVE, MDB_APPEND, MDB_APPENDDUP,
+    MDB_MULTIPLE, MDB_SUCCESS, MDB_KEYEXIST, MDB_NOTFOUND, MDB_PAGE_NOTFOUND,
+    MDB_CORRUPTED, MDB_PANIC, MDB_VERSION_MISMATCH, MDB_INVALID,
+    MDB_MAP_FULL, MDB_DBS_FULL, MDB_READERS_FULL, MDB_TLS_FULL, MDB_TXN_FULL,
+    MDB_CURSOR_FULL, MDB_PAGE_FULL, MDB_MAP_RESIZED, MDB_INCOMPATIBLE,
+    MDB_BAD_RSLOT, MDB_BAD_TXN, MDB_LAST_ERRCODE, MDB_BAD_VALSIZE;
+
+import crack.db.lmdb SimpleLMDB, Lmdb;
+
+sfmt := FStr();
+
+void exitError(String msg) {
+    cerr `$msg\n`;
+    exit(1);
+}
+
+void exitStrError() {
+    exitError(CString(mdb_strerror(errno()), false));
+}
+
+// First test the wrapped functions directly
+// Setup
+MDB_env env = mdb_env_create();
+if (env is null) exitStrError();
+if (mdb_env_set_mapsize(env, 10485760) != MDB_SUCCESS) exitStrError();
+if (mdb_env_open(env, "./testdb".buffer, 
+                 MDB_FIXEDMAP | MDB_CREATE, 0664
+                 ) != MDB_SUCCESS
+    ) {
+    exitStrError();
+}
+
+MDB_txn txn = mdb_txn_begin(env, null, 0);
+if (txn is null) exitStrError();
+
+uint dbi = mdb_dbi_open(txn, null, 0);
+
+// Store key and value
+key := "key";
+value := "value";
+
+MDB_val mkey = mdb_val_new(), mvalue = mdb_val_new(), mresult = mdb_val_new();
+mkey.mv_data = key.buffer;
+mkey.mv_size = key.size;
+mvalue.mv_data = value.buffer;
+mvalue.mv_size = value.size;
+
+if (mdb_put(txn, dbi, mkey, mvalue, 0) != MDB_SUCCESS) exitStrError();
+if (mdb_txn_commit(txn) != MDB_SUCCESS) exitStrError();
+
+txn = mdb_txn_begin(env, null, MDB_RDONLY);
+if (mdb_get(txn, dbi, mkey, mresult) != MDB_SUCCESS)
+    exitStrError();
+Buffer result = {mresult.mv_data, mresult.mv_size};
+
+if (result != value) exitError("Retrieved key does not match stored key");
+mdb_txn_abort(txn);
+
+mdb_dbi_close(env, dbi);
+mdb_env_close(env);
+
+free(mkey);
+free(mvalue);
+free(mresult);
+
+// Test wrapper module
+
+mdb := SimpleLMDB("./testlmdb", MDB_NOTLS, MDB_CREATE);
+
+mdb["key"] = "value";
+
+if (mdb["key"] != "value" ||
+    mdb.get("key") != "value" ||
+    mdb.get("key", null) != "value" ||
+    !(mdb.get("somekey", null) is null)
+    ) {
+    exitError("Key lookup failed");
+}
+
+mdb["key2"] = "value2";
+
+uint count = 0;
+for (item :in mdb) {
+    count++;
+}
+
+if (count != 2) {
+    for (item :in mdb) {
+        cout `$(item.key): $(item.val)\n`;
+    }
+    exitError("Wrong number of keys after add");
+}
+
+mdb.delete("key");
+if (!(mdb.get("key", null) is null)) {
+    exitError("Key deletion failed");
+}
+
+// Add a lot of items
+String hkey;
+for (count=0; count < 10; count++) {
+    hkey = hex(uuid(16));
+    mdb[hkey] = "value";
+}
+
+// Iterate through values
+for (item :in mdb) {
+    hkey = item.key;
+}
+
+mdb.clear();
+if (mdb.count()) {
+    for (item :in mdb) {
+        cout `$(item.key): $(item.val)\n`;
+    }
+    exitError("Clearing the DB failed");
+}
+
+mdbContainer := Lmdb("./testlmdbcontainer", MDB_NOTLS, MDB_CREATE);
+
+// Write into DB container, with transactions
+for (uint i = 0; i < 5; i++) {
+    idb := mdbContainer[sfmt `db$i`];
+
+    idb.beginWriteTransaction();
+    for (uint j = 0; j < 5; j++) {
+        idb[sfmt `key$j`] = sfmt `val$j`;
+    }
+    idb.endWriteTransaction();
+}
+
+// Read from DB container with transactions
+for (uint i = 0; i < 5; i++) {
+    idb := mdbContainer[sfmt `db$i`];
+
+    idb.beginReadTransaction();
+    for (uint j = 0; j < 5; j++) {
+        val := idb[sfmt `key$j`]
+    }
+    idb.endReadTransaction();
+}
+
+expected :=
+"{db0: {key0: val0, key1: val1, key2: val2, key3: val3, key4: val4}, \
+db1: {key0: val0, key1: val1, key2: val2, key3: val3, key4: val4}, \
+db2: {key0: val0, key1: val1, key2: val2, key3: val3, key4: val4}, \
+db3: {key0: val0, key1: val1, key2: val2, key3: val3, key4: val4}, \
+db4: {key0: val0, key1: val1, key2: val2, key3: val3, key4: val4}}";
+content := sfmt `$mdbContainer`;
+
+if (content != expected) {
+    exitError(sfmt `Nested database content is incorrect, got\n$content\nexpected\n$expected`);
+}
+
+
+
+cout `ok\n`;

@@ -1,0 +1,154 @@
+// Copyright 2011 Google Inc.
+//
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+//
+
+import crack.fs cwd, makePath, normalize, sysfs, Path, RealPath;
+import crack.io cout;
+import crack.lang InvalidArgumentError, ManagedBuffer, SystemError;
+import crack.strutil StringArray;
+
+tempFile := RealPath('writer.out');
+tempFile.writer().write('this is a test');
+
+if (!RealPath('writer.out').exists())
+    cout `FAILED exists check for written file\n`;
+
+if (tempFile.makeFullReader().readAll() != 'this is a test')
+    cout `FAILED full reader readAll()\n`;
+tempFile.delete();
+if (tempFile.exists())
+    cout `FAILED file delete\n`;
+
+// Repeat using different methods
+tempFile = RealPath('writer.out');
+tempFile.makeWriter().write('this is a test');
+
+if (!RealPath('writer.out').exists())
+    cout `FAILED exists check for written file\n`;
+
+readBuf := ManagedBuffer(100);
+rdr := tempFile.makeReader();
+rdr.read(readBuf);
+if (readBuf != 'this is a test')
+    cout `FAILED reader read()\n`;
+
+// Append to file
+tempFile.makeAppender().write(', and so is this');
+readBuf = ManagedBuffer(100);
+rdr = tempFile.makeReader();
+rdr.read(readBuf);
+if (readBuf != 'this is a test, and so is this')
+    cout `FAILED appended reader read()\n`;
+
+tempFile.delete();
+if (tempFile.exists())
+    cout `FAILED file delete\n`;
+
+tempDir := RealPath('tempdir');
+tempDir.makeDir();
+
+if (!tempDir.exists())
+    cout `FAILED making directory\n`;
+
+if (!tempDir.isDir())
+    cout `FAILED isDir() check on directory\n`;
+
+# Make sure 'errorOnExists' flag works.
+tempDir.makeDir(false);
+
+# Make sure makeDir() defaults to errorOnExists = true;
+try {
+    tempDir.makeDir();
+    cout `FAILED makeDir() on an existing directory does not error\n`;
+} catch (SystemError ex) {
+}
+
+Path foo = tempDir/'foo', bar = tempDir/'bar';
+foo.writeAll('this is foo');
+bar.writeAll('this is bar');
+if (makePath('tempdir/foo').makeFullReader().readAll() != 'this is foo')
+    cout `FAILED reading a file through makePath()\n`;
+if ((cwd/'tempdir/foo').makeFullReader().readAll() != 'this is foo')
+    cout `FAILED reading a file through cwd\n`;
+cwd.set(cwd/'tempdir');
+if (!(cwd/'foo').exists())
+    cout `FAILED changing current directory\n`;
+cwd.set('..');
+if (!(cwd/'tempdir').exists())
+    cout `FAILED changing directory to parent\n`;
+
+if (foo.getSize() != 11)
+    cout `FAILED file size() method\n`;
+
+StringArray children = {2};
+for (child :in tempDir.children())
+    children.append(child.getName());
+
+children.sort();
+if (children != StringArray!['bar', 'foo'])
+    cout `FAILED creating children, wanted foo, bar, got: $children\n`;
+
+# test move methods.
+foo1 := tempDir/'foo1';
+foo.moveTo(foo1);
+if (!foo1.exists() || foo.exists() ||
+    foo1.makeFullReader().readAll() != 'this is foo'
+    )
+    cout `FAILED moving a file.`;
+
+barDir := tempDir/'bardir';
+barDir.makeDir();
+bar1 := bar.moveToDir(barDir);
+if (!bar1.exists() || bar.exists() ||
+    bar1.makeFullReader().readAll() != 'this is bar'
+    )
+    cout `FAILED moving a file into a directory.`;
+
+foo1.delete();
+bar1.delete();
+if (barDir.exists())
+    barDir.delete();
+
+if (tempDir.exists())
+    tempDir.delete();
+
+if ((sysfs/'a/b/c').getFullName() != '/a/b/c')
+    cout `FAILED sysfs object.\n`;
+
+if (normalize('/foo//bar') != '/foo/bar')
+    cout `FAILED normalize( /foo//bar )\n`;
+
+if (normalize('foo//bar') != (cwd/'foo/bar').getFullName())
+    cout `FAILED normalize( foo/bar )\n`;
+
+if (normalize('/foo/bar/../baz') != '/foo/baz')
+    cout `FAILED normalize( /foo/bar/../baz )\n`;
+
+if (normalize('/foo/bar/./baz') != '/foo/bar/baz')
+    cout `FAILED normalize( /foo/bar/baz\n`;
+
+try {
+    normalize('/foo/../../bar');
+    cout `FAILED normalize( /foo/../..bar )\n`;
+} catch (InvalidArgumentError ex) {
+}
+
+temp2 := RealPath('tempdir1/temp2');
+temp2.makeDirs();
+
+if (!temp2.exists())
+    cout `FAILED makeDirs( tempdir1/temp2 )\n`;
+
+temp2.makeDirs();  // do it again so to verify it's idempotent.
+
+if (temp2.exists()) {
+    temp1 := RealPath('tempdir1');
+    temp1.deleteTree();
+    if (temp1.exists())
+        cout `FAILED deleteTree()\n`;
+}
+
+cout `ok\n`;

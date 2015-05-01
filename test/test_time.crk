@@ -1,0 +1,156 @@
+// Copyright 2011-2012 Google Inc.
+// Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+// Test time.h binding in runtime
+import crack.cmdline CmdOptions;
+import crack.io cout, FStr;
+import crack.lang ManagedBuffer;
+import crack.runtime ctime, strftime, asctime, epoch, strlen, strptime,
+    InternalDate;
+import crack.sys argv, env;
+import crack.time Date, Time, TimeDelta;
+
+sys_options :=  CmdOptions("--verbose=b/false");
+sys_options.parse(argv);
+
+void printDate(InternalDate d){
+   cout `date = $(d.tm_mday)/$(d.tm_mon+1)/$(d.tm_year+1900) `
+        `$(d.tm_hour):$(d.tm_min):$(d.tm_sec), $(d.tm_wday)/w and $(d.tm_yday)/y, `
+        `DST = $(d.tm_isdst)\n`;
+}
+
+InternalDate mytime = {};
+
+verbose := sys_options.getBool("v");
+
+mytime.setLocalNow();
+if (verbose) printDate(mytime);
+
+mytime.setUTCNow();
+if (verbose) printDate(mytime);
+
+secs:=mytime.getSeconds();
+if (verbose) cout `secs = $secs\n`;
+
+String makeString(ManagedBuffer buf) {
+   buf.size = strlen(buf.buffer);
+   return String(buf, true);
+}
+
+ManagedBuffer dateBuf = {100};
+asctime(mytime, dateBuf.buffer);
+dateString := makeString(dateBuf);
+if (verbose) cout `asctime = $dateString`;
+
+dateBuf = ManagedBuffer(100);
+ctime(secs, dateBuf.buffer);
+dateString2 := makeString(dateBuf);
+if (verbose) cout `ctime = $dateString2`;
+
+if (dateString!=dateString2)
+   cout `Date format mismatch: $dateString versus $dateString2\n`;
+
+mytime.setUTCSeconds(0);
+mytime.getSeconds();
+
+temp := "%A %B %d %Y";
+len:=strftime(dateString2.buffer, dateString2.size, temp.buffer,
+              mytime
+              );
+if (dateString2.substr(0,len)!='Thursday January 01 1970')
+   cout `InternalDate.strftime format mismatch, got $dateString2, len = $len\n`;
+
+// Repeat the above with the wrapped Date class
+Date Mytime = {};
+
+Mytime.setLocalNow();
+if (verbose) printDate(Mytime);
+
+Mytime.setUTCNow();
+if (verbose) printDate(Mytime);
+
+secs = Mytime.getSeconds();
+if (verbose) cout `secs = $secs\n`;
+
+dateString = Mytime.getDefaultString();
+if (verbose) cout `asctime = $dateString`;
+
+ctime(secs, dateString2.buffer);
+if (verbose) cout `ctime = $dateString2`;
+
+if (dateString!=dateString2)
+   cout `Date format mismatch: [$dateString] of size $(dateString.size) versus
+   [$dateString2] of size $(dateString2.size)\n`;
+
+
+Mytime2:=Date(secs);
+if (Mytime2.getSeconds() != secs)
+   cout `Date seconds conversion mismatch\n`;
+
+Mytime = Date(); // Reset
+Mytime.setUTCSeconds(0);
+secs = Mytime.getSeconds();
+
+if (verbose) cout `LocalSeconds = $secs\n`;
+
+dateString2 = Mytime.formatTime("%A %B %d %Y");
+len = dateString2.size;
+
+if (dateString2 != 'Thursday January 01 1970')
+   cout `Date.formatTime format mismatch, got '$dateString2', len = $len\n`;
+
+if (FStr() `$(TimeDelta(15, 123000000))` != '15.123')
+   cout `TimeDelta formatting failed\n`;
+
+if (Time(100, 123) - Time(99, 100) != TimeDelta(1, 23))
+   cout `FAILED basic Time subtraction\n`;
+
+if (Time(100, 123) - Time(99, 999999999) != TimeDelta(0, 124))
+   cout `FAILED wrap-around subtraction\n`;
+
+
+localDate := Date.now();
+localTime := Time.now();
+
+// Test strptime
+env["TZ"]="PDT";
+buf := strptime("20130610T100001".buffer, "%Y%m%dT%H%M%S".buffer, mytime);
+if (verbose)
+    cout `secs = $secs\n`;
+
+if (verbose) printDate(mytime);
+secs = mytime.getSeconds();
+if (verbose)
+    cout `secs = $secs\n`;
+
+if (secs != 1370858401)
+    cout `strptime failed, got $secs seconds instead of 1370858401\n`;
+
+// Test higher level strptime in Date class
+Mytime = Date.parseTime("20130610T100001", "%Y%m%dT%H%M%S");
+secs = Mytime.getSeconds();
+if (verbose)
+    cout `secs = $secs\n`;
+
+if (secs != 1370858401)
+    cout `Date.parseTime failed, got $secs seconds instead of 1370858401\n`;
+
+// Test time zone spec
+env["TZ"]="PDT";
+Mytime = Date.parseTime("20130610T100001", "%Y%m%dT%H%M%S");
+if (verbose)
+    cout `parseTime Date = $Mytime\n`;
+
+secs = Mytime.getSeconds();
+if (verbose)
+    cout `secs = $secs\n`;
+
+if (secs != 1370858401)
+    cout `Date.parseTime failed, got $secs seconds instead of 1370858401\n`;
+
+
+cout `ok\n`;

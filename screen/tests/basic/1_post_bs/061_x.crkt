@@ -1,0 +1,11 @@
+%%TEST%%
+extension modules
+%%ARGS%%
+
+%%FILE%%
+import test.test_extensions;
+%%EXPECT%%
+in testext
+ok
+%%STDIN%%
+

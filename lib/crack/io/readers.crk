@@ -1,0 +1,257 @@
+# Classes for reading high-level stuff from Readers.
+# Copyright 2011-2012 Google Inc.
+# Copyright 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+import crack.lang AppendBuffer, Buffer, ManagedBuffer, WriteBuffer, IndexError;
+import crack.io cout, cerr, FDReader, Reader;
+import crack.cont.hashmap HashMap;
+import crack.math min;
+
+@import crack.ann implements;
+
+NEWLINE := '\n'[0];
+
+class LineIter;
+class LineReader;
+LineIter _createLineIter(LineReader reader);
+
+## Allows you to read one line at a time.
+class LineReader {
+    Reader r;
+    ManagedBuffer buffer = {1024};
+    uint start;
+    
+    oper init(Reader reader) : r = reader {}
+    
+    String readLine() {
+        while (true) {
+            
+            for (uint i = start; i < buffer.size; ++i) {
+                if (buffer.buffer[i] == NEWLINE) {
+                    tmp := Buffer(buffer.buffer + start, i + 1 - start);
+                    start = i + 1;
+                    return String(tmp);
+                }
+            }
+            
+            # we didn't find a newline, grow the buffer and read another block
+            
+            # compact the buffer
+            if (start) {
+                buffer.compact(start);
+                start = 0;
+            }
+            
+            # if there's less than 1K of space available, grow the buffer
+            if (buffer.size + 1024 > buffer.cap)
+                buffer.grow(buffer.cap + 1024);
+            
+            # read the next block
+            amtRead := 
+                r.read(WriteBuffer(buffer.buffer + buffer.size, 0, 1024));
+            buffer.size += amtRead;
+            
+            # if we are at the end of the file, either return the remaining 
+            # chunk or a null pointer if there is no remaining chunk
+            if (!amtRead)
+                if (start == buffer.size) {
+                    return null;
+                } else {
+                    result := String(buffer.buffer + start,
+                                     buffer.size - start,
+                                     false
+                                     );
+                    start = buffer.size;
+                    return result;
+                }
+        }
+        
+        // should never get here
+        return null;
+    }
+    
+    LineIter iter() { return _createLineIter(this); }
+}
+
+class LineIter {
+    LineReader reader;
+    String line;
+    
+    oper init(LineReader reader) : reader = reader, line = reader.readLine() {}
+    bool isTrue() { return !(line is null); }
+    String elem() { return line; }
+    void next() { line = reader.readLine(); }
+}
+
+LineIter _createLineIter(LineReader reader) {
+    return LineIter(reader);
+}
+
+## A FullReader is a Reader that supports line reads, and complete reads of 
+## its underlying reader.
+class FullReader : LineReader @implements Reader {
+    
+    oper init(Reader reader) : LineReader(reader) {}
+
+    ## Read the entire remaining contents of the underlying reader and return 
+    ## it as a string.
+    String readAll() {
+        # start with the current contents of the buffer
+        AppendBuffer result = {buffer.size - start};
+        result.extend(buffer.buffer + start, buffer.size - start);
+        
+        # reset the buffer
+        start = 0;
+        buffer.size = 0;
+        
+        # use a temporary write buffer so we read in chunks
+        buf := WriteBuffer(buffer.buffer, 1024);
+        
+        # read in the remainder of the file
+        amtRead := r.read(buf);
+        while (amtRead) {
+            result.extend(buf);
+            amtRead = r.read(buf);
+        }
+        
+        return String(result, true);
+    }
+    
+    uint read(WriteBuffer buf) {
+        return r.read(buf);
+    }
+}
+
+## A Buffered reader addressable as an Array
+
+@abstract class PageBuffer {
+    String buffer;
+    bool eof;
+    uint size;
+
+    @abstract byte oper[](uint i);
+    @abstract uint vacuum(uint i);
+    @abstract String substr(uint start, uint len);
+}
+
+class PageBufferReader : PageBuffer {
+    Reader _reader;
+    HashMap[uint, String] _pageMap;
+    uint _pageSize, _firstPage, _currentPage, _pages;
+
+    void _readTo(uint i){
+        uint bi = i/_pageSize; // Buffer index
+        
+        if (_pages>0 && bi == _currentPage) // Already there
+            return;
+        else if (bi <= _currentPage && _pages > 0){
+            buffer = _pageMap[bi];
+            _currentPage = bi;
+            return;
+        }
+        else {
+            while ( _currentPage < bi || _pages == 0) {
+                buffer = _reader.read(_pageSize);
+
+                if (buffer.size < _pageSize) eof = true;
+                if (buffer.size == 0) break;
+
+                size+=buffer.size;
+                _pageMap[_pages++] = buffer;
+                if (_pages > 1)
+                    _currentPage++;
+            }
+        }
+    }
+
+    oper init(Reader r) : _pageMap(), _pageSize=1024, _firstPage=0,
+                          _currentPage=0, _pages=0, _reader = r {
+        eof = false;
+        size = 0;
+        _readTo(0);
+    }
+
+   oper init(Reader r, uint cs) : _pageMap(), _pageSize=cs, _firstPage=0,
+                          _currentPage=0, _pages=0, _reader = r {
+        eof = false;
+        size = 0;
+        _readTo(0);
+    }
+
+    ## Read a byte from "array"
+    byte oper[](uint i){
+        uint bi=i/_pageSize; // buffer index
+        if (_pages == 0 || bi >= _pages ) _readTo(i);
+        if (bi >= _pages)
+            throw IndexError('buffer index out of bounds');
+
+        // Swap in different page
+        if (_currentPage != bi) {
+            _currentPage=bi;
+            buffer = _pageMap.get(bi);
+            if (buffer is null)
+                throw IndexError('attempting to read from discarded page');
+        }
+
+        return buffer[i%_pageSize];
+    }
+
+    ## Purse page buffer of entry numbers lower than the one containing offset i
+    uint vacuum(uint i) {
+        uint j = 0;
+        for (uint bi = min(i/_pageSize, _pages);
+             bi > 0 && _pageMap.hasKey(bi-1); 
+             bi--
+             ) {
+            _pageMap.delete(bi-1);
+            j++;
+        }
+        return j;
+    }
+
+    String substr(uint start, uint len){
+        uint end = start + len;
+        uint si=start/_pageSize; // page index
+        uint ei=(start+len)/_pageSize;
+        if (_pages == 0 || si >= _pages ) _readTo(start);
+        if (_pages == 0 || ei >= _pages ) _readTo(end);
+        if (si >= _pages || ei >= _pages)
+            throw IndexError('buffer index out of bounds');
+
+        AppendBuffer retval = {len};
+        String cb;
+        for (uint i = si; i<=ei; i++){
+            cb = _pageMap[i];
+            retval.extend(
+                cb.buffer + (i == si ? start % _pageSize : 0),
+                (i == si ? ((i == ei) ? len : _pageSize - start % _pageSize) :
+                           (i<ei ? _pageSize : end % _pageSize)
+                 )
+            );
+        }
+        return String(retval);
+    }
+}
+
+## Simple page buffer where we reference the underlying string directly
+class PageBufferString : PageBuffer {
+
+    oper init(Buffer b){
+        if (b.isa(String))
+            buffer = String.cast(b);
+        else
+            buffer = String(b);
+        eof = true; // Only 1 page, all in memory
+        size = buffer.size;
+    }
+
+    byte oper[](uint i) { return buffer[i] };
+    uint vacuum(uint i) { return 0; }
+    String substr(uint start, uint len){ return buffer.substr(start, len);}
+
+}

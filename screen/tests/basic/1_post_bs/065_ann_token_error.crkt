@@ -1,0 +1,13 @@
+%%TEST%%
+annotation error with token function
+%%ARGS%%
+
+%%FILE%%
+
+    @import test.testann errorTok;
+    @errorTok
+    XXX
+%%EXPECT%%
+ParseError: %OUTDIR%065_ann_token_error.crk:4:1: error with token
+%%STDIN%%
+

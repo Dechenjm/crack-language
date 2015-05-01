@@ -1,0 +1,564 @@
+# Copyright 2011-2012 Google Inc.
+# Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# Singly and Doubly Linked-list Generics
+
+import crack.lang AssertionError, IndexError, InvalidArgumentError, Writer, 
+                  Formatter;
+import crack.io FStr;
+
+# we use poormac here because the standard macro mechanism depends on this 
+# module.
+@import crack._poormac define;
+
+void _bind(Object obj) { obj.oper bind(); }
+void _release(Object obj) { obj.oper release(); }
+bool _isObject(Object obj) { return true; }
+bool _isNull(Object obj) {
+    return (obj is null);
+}
+bool _equal(Object a, Object b) {
+    return a == b;
+}
+
+@define _nobind 1
+    void _bind($1 i) { }
+    void _release($1 i) { }
+    bool _isObject($1 i) { return false; }
+    bool _isNull($1 i) { return false; } 
+    bool _equal($1 a, $1 b) { return a == b; }
+$$
+
+#@_nobind bool
+@_nobind byte
+@_nobind int
+@_nobind int16
+@_nobind int32
+@_nobind uint
+@_nobind uint16
+@_nobind uint32
+@_nobind int64
+@_nobind uint64
+@_nobind float
+@_nobind float32
+@_nobind float64
+#@_nobind byteptr
+
+## A singly-linked list.
+class List[Elem] {
+
+    class Node {
+        Elem elem;
+        Node next;
+        
+        oper init(Elem elem) : elem = elem {}
+    }
+    
+    ## A linked list iterator.
+    class Iter {
+        Node _node;
+        bool __first;
+        oper init(Node node) : _node = node, __first = true {}
+        
+        Elem elem() {
+            if (_node)
+                return _node.elem;
+            else
+                return null;
+        }
+        
+        bool next() {
+            if (!_node)
+                return false;
+            
+            _node = _node.next;
+            return _node;
+        }
+    
+        bool nx() {
+            if (!_node)
+                return false;
+            
+            if (__first)
+                __first = false;
+            else
+                _node = _node.next;
+            return _node;
+        }
+        
+        bool isTrue() { return _node; }
+    }
+
+    Node head;
+    Node tail;
+    uint _count;
+    
+    oper init() {}
+    
+    Iter iter() {
+        return Iter(head);
+    }
+
+    void append(Elem elem) {
+        if (tail) {
+            temp := Node(elem);
+            tail.next = temp;
+            tail = temp;
+        } else {
+            head = tail = Node(elem);
+        }
+        _count = _count + 1;
+    }
+    
+    void pushHead(Elem elem) {
+        newNode := Node(elem);
+        if (head) {
+            newNode.next = head;
+            head = newNode;
+        } else {
+            head = tail = newNode;
+        }
+        _count = _count + 1;
+    }
+    
+    void pushTail(Elem elem) {
+        append(elem);
+    }
+
+    ## Remove the element from the front of the list and return it.
+    Elem popHead() {
+        if (!head)
+            throw InvalidArgumentError('Attempting to pop from an empty list');
+        elem := head.elem;
+        if (head == tail)
+            head = tail = null;
+        else
+            head = head.next;
+        --_count;
+        return elem;
+    }
+
+    ## Remove the element from the end of the list and return it.
+    ## This operation is O(N), do not use unless the list is short.
+    Elem popTail() {
+        if (!tail)
+            throw InvalidArgumentError('Attempting to pop from an empty list');
+        if (head == tail) {
+            elem := head.elem;
+            head = tail = null;
+            --_count;
+            return elem;
+        }
+
+        Node old, cur;
+        old = head;
+        cur = head;
+
+        while (cur != tail){
+            old = cur;
+            cur = cur.next;
+        }
+        
+        elem := tail.elem;
+        tail = old;
+        --_count;
+        return elem;
+    }
+
+    Elem pop(){
+        return popTail();
+    }
+
+    Node __findNode(uint index) {
+        i := index;
+        node := head;
+        while (i && node) {
+            node = node.next;
+            i = i - 1;
+        }
+        if (!node) throw AssertionError('List is shorter than its count.');
+        return node;
+    }
+
+    void insert(uint index, Elem elem) {
+        # special-case inserting at the beginning
+        if (!index) {
+            pushHead(elem);
+            return;
+        }
+
+        # find the node that's going to be before the new node
+        node := __findNode(index - 1);
+
+        # create a new node and append it to the node we found
+        newNode := Node(elem);
+        newNode.next = node.next;
+        node.next = newNode;
+        
+        # see if we need to fix the tail
+        if (node is tail)
+            tail = newNode;
+        _count = _count + 1;
+    }
+
+    void delete(uint index) {
+        if (head is null || tail is null) throw AssertionError("Cannot delete node from empty list");
+        if (index > _count)
+            throw IndexError('List index out of range in delete()');
+        if (index > 0) {
+            # find the node before it.
+            node := __findNode(index - 1);
+            
+            # if the next node is the tail, reset the tail.
+            if (node.next is tail)
+                tail = node;
+            
+            # drop the current next node.
+            tmp := node.next.next;
+            node.next = tmp;
+        } else {
+            # first node is special and easy
+            tmp := head.next;
+            head = tmp;
+        }
+        
+        _count = _count - 1;
+    }
+
+    void delete(Elem elem) {
+        if (_isNull(elem)) throw InvalidArgumentError("Invalid argument null for delete()");
+        if (_isNull(head) || _isNull(tail)) throw AssertionError("Cannot delete element from empty list");
+        if (_equal(head.elem, elem) && head) {
+            popHead();
+        } else if (_equal(tail.elem, elem) && tail) {
+            popTail();
+        } else {
+            Node onode, tnode;
+            onode = tnode = head;
+            while (!_equal(tnode.elem, elem)) {
+                onode = tnode;
+                tnode = tnode.next;
+            }
+            onode.next = tnode.next;
+        }
+        _count--;
+    }
+
+    ## Delete all items in the list.
+    void clear() {
+        head = tail = null;
+        _count = 0;
+    }
+
+    Elem oper [](uint index) {
+        if (index > _count)
+            throw IndexError('List index out of range in []');
+        node := __findNode(index);
+        return node.elem;
+    }
+    
+    uint count() { return _count; }
+
+    ## Empty lists are false, non-empty lists are true.
+    bool isTrue() { return _count; }
+
+    void formatTo(Formatter fmt) {
+        fmt `[`;
+        bool first = true;
+        for (node := head; node; node = node.next) {
+            if (!first)
+                fmt `, `;
+            else
+                first = false;
+            fmt.format(node.elem);
+        }
+        fmt `]`;
+    }
+}
+
+## Doubly-linked list
+class DList[Elem] {
+
+    class Node {
+        Elem elem;
+        Node next, prev;
+    
+        oper init(Elem elem, Node prev) :
+            elem = elem,
+            prev = prev {
+        }
+    }
+
+    class Iter {
+        Node _node;
+        bool __first;
+        oper init(Node node) : _node = node, __first = true {}
+        
+        Elem elem() {
+            if (_node)
+                return _node.elem;
+            else
+                return null;
+        }
+        
+        bool next() {
+            if (!_node)
+                return false;
+            
+            _node = _node.next;
+            return _node;
+        }
+    
+        bool nx() {
+            if (!_node)
+                return false;
+            
+            if (__first)
+                __first = false;
+            else
+                _node = _node.next;
+            return _node;
+        }
+        
+        bool isTrue() { return _node; }
+
+        ## The opposite of next(): Back-up the iterator to the last node, 
+        ## return true if it's valid.
+        bool prev() { _node = _node.prev; return _node; }
+    }
+
+    Node head, tail;
+    uint _count;
+
+    oper init() {}
+
+    oper del() {
+        # have to break the reference cycles
+        node := head;
+        while (node) {
+            node.prev = null;
+            node = node.next;
+        }
+    }
+
+    ## Insert the object at the iterator (after insertion, the iterator will 
+    ## reference the new node with the element, the old node that
+    ## iterator previously referenced will be the next node)
+    void insert(Iter ix, Elem elem) {
+        
+        # get what will be the next and previous node of the new node.
+        next := ix._node;
+        prev := next.prev;
+        new := Node(elem, prev);
+        new.next = next;
+
+        if (prev)
+            prev.next = new;
+        else
+            head = new;
+
+        if (next)
+            next.prev = new;
+        else
+            tail = new;
+
+        ix._node = new;
+        ++_count;
+    }
+
+    ## Delete the object at the iterator.  After deletion, the iterator 
+    ## will refer to what was originally the subsequent node.
+    void delete(Iter ix) {
+        node := Node.unsafeCast(ix._node);
+        if (node.next)
+            node.next.prev = node.prev;
+        else
+            tail = node.prev;
+        
+        if (node.prev)
+            node.prev.next = node.next;
+        else
+            head = node.next;
+        
+        --_count;
+        ix._node = node.next;
+    }
+    
+    ## Delete all elements from the list.
+    void clear() {
+        head = tail = null;
+        _count = 0;
+    }
+
+    Iter iter() {
+        return Iter(head);
+    }
+
+    ## Returns an iterator.
+    ## if 'back' is true, initialize it to point to the last node on the 
+    ## list. Otherwise point it to the first node.
+    Iter iter(bool back) {
+        if (back)
+            return Iter(tail);
+        else
+            return Iter(head);
+    }
+
+    void append(Elem elem) {
+        if (tail) {
+            temp := Node(elem, tail);
+            tail.next = temp;
+            tail = temp;
+        } else {
+            head = tail = Node(elem, null);
+        }
+        _count = _count + 1;
+    }
+    
+    void pushHead(Elem elem) {
+        newNode := Node(elem, null);
+        if (head) {
+            newNode.next = head;
+            head.prev = newNode;
+            head = newNode;
+        } else {
+            head = tail = newNode;
+        }
+        _count = _count + 1;
+    }
+
+    void pushTail(Elem elem) {
+        append(elem);
+    }
+
+    Elem popHead() {
+        if (!head) 
+            throw InvalidArgumentError('Attempting to pop from an empty list');
+        elem := head.elem;
+        if (head == tail)
+            head = tail = null;
+        else
+            head = head.next;
+        if (head)
+            head.prev = null;
+        --_count;
+        return elem;
+    }
+
+    ## Remove the element from the back of the list and return it.
+    Elem popTail() {
+        if (!tail)
+            throw InvalidArgumentError('Attempting to pop from an empty list');
+        elem := tail.elem;
+        node := tail;
+        if (tail == head)
+            tail = head = null;
+        else
+            tail = node.prev;
+        if (tail)
+            tail.next = null;
+        else
+            head = null;
+        --_count;
+        return elem;
+    }
+
+    Elem pop(){
+        return popTail();
+    }
+
+    Node __findNode(uint index) {
+        i := index;
+        node := head;
+        while (i && node) {
+            node = node.next;
+            i = i - 1;
+        }
+        if (!node) throw AssertionError('List is shorter than its count.');
+        return node;
+    }
+
+    void insert(uint index, Elem elem) {
+        # special-case inserting at the beginning
+        if (!index) {
+            pushHead(elem);
+            return;
+        }
+
+        # find the node that's going to be before the new node
+        node := __findNode(index - 1);
+
+        # create a new node and append it to the node we found
+        newNode := Node(elem, node);
+        newNode.next = node.next;
+        if (node.next)
+            node.next.prev = newNode;
+        node.next = newNode;
+        
+        # see if we need to fix the tail
+        if (node is tail)
+            tail = newNode;
+        _count = _count + 1;
+    }
+
+    void delete(uint index) {
+        if (index > _count)
+            throw IndexError('List index out of range in delete()');
+        if (index > 0) {
+            # find the node before it.
+            node := __findNode(index - 1);
+            
+            # if the next node is the tail, reset the tail.
+            if (node.next is tail)
+                tail = node;
+            
+            # drop the current next node.
+            tmp := node.next.next;
+            node.next = tmp;
+            if (tmp)
+                tmp.prev = node;
+        } else {
+            # first node is special and easy
+            tmp := head.next;
+            if (head is tail)
+                tail = tmp;
+            head = tmp;
+            if (tmp)
+                tmp.prev = null;
+        }
+        
+        _count = _count - 1;
+    }
+
+    Elem oper [](uint index) {
+        if (index > _count)
+            throw IndexError('List index out of range in []');
+        node := __findNode(index);
+        return node.elem;
+    }
+
+    uint count() { return _count; }
+
+    ## Empty lists are false, non-empty lists are true.
+    bool isTrue() { return !head ? false : _count; }
+
+    void formatTo(Formatter fmt) {
+        fmt `[`;
+        bool first = true;
+        for (elem :in this) {
+            if (!first)
+                fmt `, `;
+            else
+                first = false;
+            if (_isNull(elem)) fmt `null`;
+            else {
+                fmt `$elem`;
+            }
+        }
+        fmt `]`;
+    }
+}
