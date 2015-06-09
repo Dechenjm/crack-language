@@ -1,0 +1,41 @@
+# Copyright 2010 Google Inc.
+# Copyright 2011 Conrad Steenberg <conrad.steenberg@gmail.com>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# test random stuff in the runtime extension.
+
+import crack.io cout;
+import crack.runtime SockAddrIn, TimeVal;
+import crack.sys Environment;
+
+s := SockAddrIn(100, 200);
+if (s.family != 2)
+    cout `FAIL family != 2: $(s.family)\n`;
+if (s.addr != 100)
+    cout `FAIL addr != 100: $(s.addr)\n`;
+if (s.port != 200)
+    cout `FAIL port != 200: $(s.port)\n`;
+
+t := TimeVal(100, 200);
+if (t.secs != 100)
+    cout `FAIL tv.secs != 100\n`;
+if (t.nsecs != 200)
+    cout `FAIL tv.secs != 200\n`;
+
+# --- Test environment functions ---
+Environment env = {};
+
+env.set("test_time", "true");
+if (env["test_time"] != "true")
+   cout `Environment.set() failed\n`;
+
+env["test_time2"] = "false";
+if (env["test_time2"] != "false")
+   cout `Environment[]= failed\n`;
+
+
+
+cout `ok\n`;

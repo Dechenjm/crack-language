@@ -1,0 +1,111 @@
+// Classes for directory traversal
+// Copyright 2010-2011 Google Inc.
+// Copyright 2010-2011 Shannon Weyrick <weyrick@mozek.us>
+// Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+import crack.io cerr, StandardFormatter, Writer;
+import crack.lang die, FreeBase, CString, Formatter;
+import crack.exp.bindings Opaque;
+import crack.cont.list List;
+import crack.exp.file Openable, FileInfo;
+
+import crack.runtime opendir, closedir, readdir, getDirEntry, Dir, DirEntry;
+
+// must match Dir.h defines
+int __CRACK_DTYPE_DIR   = 1;
+int __CRACK_DTYPE_FILE  = 2;
+int __CRACK_DTYPE_OTHER = 3;
+
+byte PATH_SEPARATOR = b"/";
+
+class Directory : Object, Openable {
+
+    String name;
+
+    Dir _dir;
+
+    List[Directory] _dirList = {};
+    List[FileInfo] _fileList = {};
+
+    void __stripTrailing() {
+        // possibly strip trailing delim
+        if (name.rfind(PATH_SEPARATOR) > 0 &&
+            name.rfind(PATH_SEPARATOR) == (name.size-1))
+            name = name.substr(0, name.size-1);
+    }
+
+    oper init(String name0, bool open): name = name0 {
+        __stripTrailing();
+        if (open)
+            _open();
+    }
+
+    oper init(String name0): name = name0 {
+        __stripTrailing();
+        // default open
+        _open();
+    }
+
+    void _open() {
+
+        cn := CString(name);
+        _dir = opendir(cn.buffer);
+        _isValid = !(_dir is null);
+        _isOpened = true;
+
+        if (!_isValid)
+            return;
+
+        DirEntry d = getDirEntry(_dir);
+        StaticString n;
+        while (readdir(_dir)) {
+            if (d.type == __CRACK_DTYPE_DIR) {
+                n = StaticString(d.name);
+                if (n != '.' && n != '..')
+                    _dirList.append(Directory(name+PATH_SEPARATOR+n));
+            }
+            else {
+                _fileList.append(FileInfo(name+PATH_SEPARATOR+d.name));
+            }
+        }
+
+    }
+
+    oper del() {
+        if (_isValid)
+            closedir(_dir);
+    }
+
+    String nameWithTrailing() {
+        return name+PATH_SEPARATOR;
+    }
+
+    /// Returns an iterator over the subdirectories (Iter[Directory]).
+    List[Directory] dirs() {
+        if (!_isOpened)
+            _open();
+        if (_isValid)
+            return _dirList;
+        else
+            return null;
+    }
+
+    List[FileInfo] files() {
+        if (!_isOpened)
+            _open();
+        if (_isValid)
+            return _fileList;
+        else
+            return null;
+    }
+
+    void formatTo(Formatter fmt) {
+        fmt.format(name);
+    }
+}
+

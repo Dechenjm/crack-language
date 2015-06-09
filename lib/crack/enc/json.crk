@@ -1,0 +1,17 @@
+## Front-end to JSON module
+## Copyright 2012 Google Inc.
+##
+##   This Source Code Form is subject to the terms of the Mozilla Public
+##   License, v. 2.0. If a copy of the MPL was not distributed with this
+##   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+##
+
+import crack.enc.json.parser JSONParser;
+import crack.enc.json.lib UnexpectedToken, ParseException, JSONFormatter,
+    JSONStringFormatter, JSONObject, JSONArray, JSONInt, JSONFloat, JSONBool,
+    JSONString;
+
+@export_symbols JSONParser, UnexpectedToken, ParseException, JSONFormatter,
+    JSONStringFormatter, JSONObject, JSONArray, JSONInt, JSONFloat, JSONBool,
+    JSONString;
+

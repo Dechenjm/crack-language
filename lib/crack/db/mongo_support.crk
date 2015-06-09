@@ -1,0 +1,41 @@
+import crack.lang ManagedBuffer, Buffer, InvalidArgumentError;
+import crack.io Formatter;
+import crack.runtime memcpy;
+import crack.ascii hex;
+import crack.random uuid;
+
+class OID : ManagedBuffer {
+
+    void setZero() {
+        for (uint i = 0; i < 12; i++)
+            buffer[i] = 0;
+    }
+
+    oper init() : ManagedBuffer(12) {
+        size = 12;
+        setZero();
+    }
+
+    oper init(Buffer newdata) : ManagedBuffer(12) {
+        size = 12;
+        if (!(newdata is null)) {
+            if (newdata.size != 12)
+                throw InvalidArgumentError("BSON OID objects must have size 12");
+            memcpy(buffer, newdata.buffer, newdata.size);
+        }
+    }
+
+    @static OID new() {
+        return OID(uuid(12));
+    }
+
+    bool isTrue() {
+        for (uint i = 0; i < 12; i++)
+            if (buffer[i] != 0) return true;
+        return false;
+    }
+
+    void format(Formatter fmt) {
+        fmt.write(hex(this));
+    }
+}

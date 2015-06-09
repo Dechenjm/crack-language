@@ -1,0 +1,12 @@
+%%TEST%%
+first class methods
+%%ARGS%%
+
+%%FILE%%
+class B { void bar() { puts('ok') } }
+y := B.bar;
+y(B());
+%%EXPECT%%
+ok
+%%STDIN%%
+

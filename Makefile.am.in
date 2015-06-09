@@ -1,0 +1,397 @@
+# Copyright 2003 Michael A. Muller <mmuller@enduden.com>
+# Copyright 2010-2012 Google Inc.
+# Copyright 2011 Shannon Weyrick <weyrick@mozek.us>
+# Copyright 2012 Arno Rehn <arno@arnorehn.de>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+# include macros from the m4 dir.
+ACLOCAL_AMFLAGS = -I m4 --install
+
+AUTOMAKE_OPTIONS = subdir-objects
+
+lib_LTLIBRARIES = libCrackDebugTools.la libCrackLang.la \
+    libCrackNativeRuntime.la
+libCrackLang_la_SOURCES = %libCrackSources%
+libCrackLang_la_CPPFLAGS = $(AM_CPPFLAGS)
+libCrackLang_la_LDFLAGS = -version-info 7:0:0 @LLVM_LDFLAGS@ @LLVM_LIBS@ \
+    $(AM_LDFLAGS)
+libCrackLang_la_LIBADD = libCrackDebugTools.la
+
+libCrackDebugTools_la_SOURCES = debug/DebugTools.cc util/md5.c \
+    util/SourceDigest.cc util/Hasher.cc
+libCrackDebugTools_la_CPPFLAGS = $(AM_CPPFLAGS)
+libCrackDebugTools_la_LDFLAGS = -version-info 3:0:0 @LLVM_LDFLAGS@ \
+    @LLVM_LIBS@ $(AM_LDFLAGS)
+
+libCrackNativeRuntime_la_SOURCES = ext/Stub.cc
+libCrackNativeRuntime_la_CPPFLAGS = $(AM_CPPFLAGS)
+libCrackNativeRuntime_la_LDFLAGS = -version-info 5:0:0 $(AM_LDFLAGS)
+
+rtlibdir = $(libdir)/crack-$(VERSION)/crack
+rtlib_LTLIBRARIES = runtime.la compiler.la
+
+runtime_la_LDFLAGS = -avoid-version -module @LIBICONV@ $(AM_LDFLAGS)
+runtime_la_CPPFLAGS = @INCICONV@
+runtime_la_SOURCES = %libRuntimeSources%
+runtime_la_LIBADD = libCrackDebugTools.la
+
+compiler_la_LDFLAGS = -avoid-version -module $(AM_LDFLAGS)
+compiler_la_SOURCES = opt/compiler.cc
+compiler_la_LIBADD = libCrackLang.la
+
+# this is really annoying, testext needs to be installed in order to generate 
+# a .so file.
+extlibdir = $(libdir)/crack-$(VERSION)/crack/ext
+extlib_LTLIBRARIES = testext.la
+
+testext_la_LDFLAGS = -avoid-version -module $(AM_LDFLAGS)
+testext_la_SOURCES = test/testext.cc
+
+EXTENSIONS = _cairo _gl _gtk _pcre _sdl _sdl_mixer _alsa_midi _sdlgfx \
+             _fluidsynth _cairosdl _xs _ssl _png _curl _jack _pthread
+
+if HAVE_GTK
+extlib_LTLIBRARIES += _gtk.la
+_gtk_la_LDFLAGS = -avoid-version -module @GTK_LIBS@ @GTK_CFLAGS@ $(AM_LDFLAGS)
+_gtk_la_CXXFLAGS = @GTK_CFLAGS@
+_gtk_la_SOURCES = opt/_gtk.cc
+endif
+
+if HAVE_PCRE
+extlib_LTLIBRARIES += _pcre.la
+_pcre_la_LDFLAGS = -avoid-version -module @PCRE_LIBS@ @PCRE_CFLAGS@ $(AM_LDFLAGS)
+_pcre_la_CXXFLAGS = @PCRE_CFLAGS@
+_pcre_la_SOURCES = opt/_pcre.cc
+endif
+
+if HAVE_SDL
+extlib_LTLIBRARIES += _sdl.la
+_sdl_la_LDFLAGS = -avoid-version -module @SDL_LIBS@ $(AM_LDFLAGS)
+_sdl_la_CXXFLAGS = @SDL_CFLAGS@
+_sdl_la_SOURCES = opt/_sdl.cc
+endif
+
+if HAVE_SDL_MIXER
+extlib_LTLIBRARIES += _sdl_mixer.la
+_sdl_mixer_la_LDFLAGS = -avoid-version -module @SDL_MIXER_LIBS@ $(AM_LDFLAGS)
+_sdl_mixer_la_CXXFLAGS = @SDL_MIXER_CPPFLAGS@
+_sdl_mixer_la_SOURCES = opt/_sdl_mixer.cc
+endif
+
+if HAVE_SDLGFX
+extlib_LTLIBRARIES += _sdlgfx.la
+_sdlgfx_la_LDFLAGS = -avoid-version -module @SDL_LIBS@ @SDLGFX_LIBS@ \
+    $(AM_LDFLAGS)
+_sdlgfx_la_CXXFLAGS = @SDL_CFLAGS@ @SDLGFX_CPPFLAGS@ 
+_sdlgfx_la_SOURCES = opt/_sdlgfx.cc
+endif
+
+
+if HAVE_GL
+extlib_LTLIBRARIES += _gl.la
+_gl_la_LDFLAGS = -avoid-version -module @GL_LIBS@ $(AM_LDFLAGS)
+_gl_la_CXXFLAGS = @GL_LIBS@
+_gl_la_SOURCES = opt/_gl.cc
+endif
+
+if HAVE_CAIRO
+extlib_LTLIBRARIES += _cairo.la
+_cairo_la_LDFLAGS = -avoid-version -module @CAIRO_LIBS@ $(AM_LDFLAGS)
+_cairo_la_CPPFLAGS = @CAIRO_CPPFLAGS@
+_cairo_la_SOURCES = opt/_cairo.cc
+
+if HAVE_SDL
+extlib_LTLIBRARIES += _cairosdl.la
+_cairosdl_la_LDFLAGS = -avoid-version -module @CAIRO_LIBS@ @SDL_LIBS@ \
+    $(AM_LDFLAGS)
+_cairosdl_la_SOURCES = opt/_cairosdl.cc opt/cairosdl.c
+_cairosdl_la_CPPFLAGS = @CAIRO_CPPFLAGS@ @SDL_CFLAGS@
+endif
+endif
+
+if HAVE_XS
+extlib_LTLIBRARIES += _xs.la
+_xs_la_LDFLAGS = -avoid-version -module @XS_LIBS@ $(AM_LDFLAGS)
+_xs_la_CPPFLAGS = @XS_CFLAGS@
+_xs_la_SOURCES = opt/_xs.cc
+endif
+
+if HAVE_ALSA
+extlib_LTLIBRARIES += _alsa_midi.la
+_alsa_midi_la_LDFLAGS = -avoid-version -module @ALSA_LIBS@ $(AM_LDFLAGS)
+_alsa_midi_la_CXXFLAGS = @ALSA_CFLAGS@
+_alsa_midi_la_SOURCES = opt/_alsa_midi.cc
+endif
+
+if HAVE_SSL
+extlib_LTLIBRARIES += _ssl.la
+_ssl_la_LDFLAGS = -avoid-version -module @SSL_LIBS@ $(AM_LDFLAGS)
+_ssl_la_CXXFLAGS = @SSL_CPPFLAGS@
+_ssl_la_SOURCES = opt/_ssl.cc
+endif
+
+if HAVE_FLUIDSYNTH
+extlib_LTLIBRARIES += _fluidsynth.la
+_fluidsynth_la_LDFLAGS = -avoid-version -module @FLUIDSYNTH_LIBS@ $(AM_LDFLAGS)
+_fluidsynth_la_CXXFLAGS = @FLUIDSYNTH_CPPFLAGS@
+_fluidsynth_la_SOURCES = opt/_fluidsynth.cc
+endif
+
+if HAVE_PNG
+extlib_LTLIBRARIES += _png.la
+_png_la_LDFLAGS = -avoid-version -module @PNG_LIBS@ $(AM_LDFLAGS)
+_png_la_SOURCES = opt/_png.cc
+endif
+
+if HAVE_LIBCURL
+extlib_LTLIBRARIES += _curl.la
+_curl_la_LDFLAGS = -avoid-version -module @LIBCURL_LIBS@ $(AM_LDFLAGS)
+_curl_la_CPPFLAGS = @LIBCURL_CPPFLAGS@
+_curl_la_SOURCES = opt/_curl.cc
+endif
+
+if HAVE_JACK
+extlib_LTLIBRARIES += _jack.la
+_jack_la_LDFLAGS = -avoid-version -module @JACK_LIBS@ $(AM_LDFLAGS)
+_jack_la_CPPFLAGS = @JACK_CPPFLAGS@
+_jack_la_SOURCES = opt/_jack.cc
+endif
+
+if HAVE_PTHREAD
+extlib_LTLIBRARIES += _pthread.la
+_pthread_la_LDFLAGS = -avoid-version -module @PTHREAD_LIBS@ $(AM_LDFLAGS)
+_pthread_la_CPPFLAGS = @PTHREAD_CPPFLAGS@
+_pthread_la_SOURCES = opt/_pthread.cc
+endif
+
+noinst_HEADERS = \
+    builder/Builder.h \
+    builder/BuilderOptions.h \
+    builder/llvm/ArrayTypeDef.h \
+    builder/llvm/BBranchPoint.h \
+    builder/llvm/BBuilderContextData.h \
+    builder/llvm/BCleanupFrame.h \
+    builder/llvm/BExtFuncDef.h \
+    builder/llvm/BFieldRef.h \
+    builder/llvm/BFuncDef.h \
+    builder/llvm/BFuncPtr.h \
+    builder/llvm/BJitModuleDef.h \
+    builder/llvm/BModuleDef.h \
+    builder/llvm/BResultExpr.h \
+    builder/llvm/BTypeDef.h \
+    builder/llvm/Cacher.h \
+    builder/llvm/Consts.h \
+    builder/llvm/DebugInfo.h \
+    builder/llvm/ExceptionCleanupExpr.h \
+    builder/llvm/FuncBuilder.h \
+    builder/llvm/FunctionTypeDef.h \
+    builder/llvm/Incompletes.h \
+    builder/llvm/LLVMBuilder.h \
+    builder/llvm/LLVMJitBuilder.h \
+    builder/llvm/LLVMLinkerBuilder.h \
+    builder/llvm/LLVMValueExpr.h \
+    builder/llvm/ModuleMerger.h \
+    builder/llvm/Native.h \
+    builder/llvm/Ops.h \
+    builder/llvm/PlaceholderInstruction.h \
+    builder/llvm/StructResolver.h \
+    builder/llvm/Utils.h \
+    builder/llvm/VarDefs.h \
+    builder/llvm/VTableBuilder.h \
+    builder/mdl/ArrayTypeDef.h \
+    builder/mdl/FunctionTypeDef.h \
+    builder/mdl/ModelBuilder.h \
+    builder/mdl/ModelFuncDef.h \
+    builder/mdl/ModelModuleDef.h \
+    builder/mdl/Utils.h \
+    compiler/init.h \
+    config.h \
+    Crack.h \
+    debug/DebugTools.h \
+    ext/Stub.h \
+    model/AllocExpr.h \
+    model/Annotation.h \
+    model/ArgDef.h \
+    model/AssignExpr.h \
+    model/Branchpoint.h \
+    model/BuilderContextData.h \
+    model/CleanupFrame.h \
+    model/CompositeNamespace.h \
+    model/Construct.h \
+    model/ConstSequenceExpr.h \
+    model/ConstVarDef.h \
+    model/Context.h \
+    model/ContextStackFrame.h \
+    model/Deref.h \
+    model/DeserializationError.h \
+    model/Deserializer.h \
+    model/EphemeralImportDef.h \
+    model/Expr.h \
+    model/FloatConst.h \
+    model/FuncAnnotation.h \
+    model/FuncCall.h \
+    model/FuncDef.h \
+    model/Generic.h \
+    model/GenericParm.h \
+    model/GetRegisterExpr.h \
+    model/GlobalNamespace.h \
+    model/Import.h \
+    model/ImportedDef.h \
+    model/Initializers.h \
+    model/InstVarDef.h \
+    model/IntConst.h \
+    model/LocalNamespace.h \
+    model/ModuleDef.h \
+    model/ModuleDefMap.h \
+    model/MultiExpr.h \
+    model/Namespace.h \
+    model/NamespaceStub.h \
+    model/NestedDeserializer.h \
+    model/NullConst.h \
+    model/Options.h \
+    model/OverloadDef.h \
+    model/PrimFuncAnnotation.h \
+    model/ProtoBuf.h \
+    model/ResultExpr.h \
+    model/Serializer.h \
+    model/SetRegisterExpr.h \
+    model/StatState.h \
+    model/StrConst.h \
+    model/StubDef.h \
+    model/TernaryExpr.h \
+    model/TypeDef.h \
+    model/VarAnnotation.h \
+    model/VarDef.h \
+    model/VarDefImpl.h \
+    model/VarRef.h \
+    opt/cairosdl.h \
+    parser/Location.h \
+    parser/ParseError.h \
+    parser/Parser.h \
+    parser/Token.h \
+    parser/Toker.h \
+    runtime/BorrowedExceptions.h \
+    runtime/Dir.h \
+    runtime/Exceptions.h \
+    runtime/ItaniumExceptionABI.h \
+    runtime/Net.h \
+    runtime/Process.h \
+    runtime/Util.h \
+    spug/check.h \
+    spug/Exception.h \
+    spug/RCBase.h \
+    spug/RCPtr.h \
+    spug/stlutil.h \
+    spug/StringFmt.h \
+    spug/Tracer.h \
+    spug/TypeInfo.h \
+    tests/MockBuilder.h \
+    tests/MockFuncDef.h \
+    tests/MockModuleDef.h \
+    util/CacheFiles.h \
+    util/Hasher.h \
+    util/md5.h \
+    util/SourceDigest.h
+
+compilerincdir = $(includedir)/crack-$(VERSION)/crack/compiler
+compilerinc_HEADERS = \
+    compiler/Annotation.h \
+    compiler/CrackContext.h \
+    compiler/Location.h \
+    compiler/Token.h
+
+extincdir = $(includedir)/crack-$(VERSION)/crack/ext
+extinc_HEADERS = \
+    ext/Func.h \
+    ext/Module.h \
+    ext/RCObj.h \
+    ext/Type.h \
+    ext/util.h \
+    ext/Var.h
+
+EXTRA_DIST = doc lib $(srcdir)/test/*.crk $(srcdir)/test/bad_extension.so \
+    $(srcdir)/test/screen $(srcdir)/test/test*.crt $(srcdir)/test/test*.key \
+    $(srcdir)/test/*.cc Credits tools CMakeLists.txt opt/CMakeLists.txt \
+    sourceModules.txt runtimeModules.txt cmake COPYING doc/license \
+    screen/builders.crk screen/config.crk screen/screen.crk screen/stats.crk \
+    screen/testdata.crk screen/planB screen/tests screen/systest.crk \
+    $(srcdir)/opt/*.crk
+    
+
+bin_PROGRAMS = crack
+
+crack_SOURCES = crack_main.cc
+crack_LDADD = libCrackLang.la libCrackDebugTools.la $(LDFLAGS)
+
+noinst_PROGRAMS = unittests
+unittests_SOURCES = test/unittests_main.cc
+unittests_LDADD = libCrackLang.la libCrackDebugTools.la
+
+# install under prefix/lib instead of libdir so it's not platform dependent.
+cracklib = ${prefix}/lib/crack-${VERSION}
+AM_CPPFLAGS = @LLVM_CPPFLAGS@ -DCRACKLIB=\"${cracklib}\" @PTHREAD_CPPFLAGS@
+AM_LDFLAGS = @PTHREAD_LDFLAGS@
+
+# Depend on "testbed" so that the testbed installation won't happen as root if 
+# the user runs "make; sudo make install"
+all: testbed
+
+doc/Manual.html: doc/Manual.nml doc/Manual.template crack testbed
+	$(MKDIR_P) doc
+	./crack -l $(srcdir)/lib:./lib $(srcdir)/tools/nml2html.crk -t \
+	   $(srcdir)/doc/Manual.template \
+	   -o $@ \
+	   $(srcdir)/doc/Manual.nml
+
+install-data-local: doc/Manual.html
+	$(MKDIR_P) $(DESTDIR)$(cracklib)
+	$(MKDIR_P) $(DESTDIR)$(cracklib)/crack
+	(cd $(srcdir)/lib; \
+	 for file in $$(find); do \
+	   if test -d $$file; then \
+	       $(MKDIR_P) $(DESTDIR)$(cracklib)/$$file; \
+	   else \
+	       $(INSTALL) $$file $(DESTDIR)$(cracklib)/$$file; \
+	   fi; \
+	 done)
+	$(MKDIR_P) $(DESTDIR)$(docdir)
+	$(INSTALL) doc/Manual.html $(DESTDIR)$(docdir)
+
+install-exec-local: install-binPROGRAMS
+	ln -f $(DESTDIR)$(bindir)/crack $(DESTDIR)$(bindir)/crack-$(VERSION)
+	ln -sf $(DESTDIR)$(bindir)/crack-$(VERSION) $(DESTDIR)$(bindir)/crackc
+
+uninstall-local:
+	rm -r $(DESTDIR)$(cracklib)
+	rm -r $(DESTDIR)$(docdir)
+	rm $(DESTDIR)$(bindir)/crack-$(VERSION)
+
+clean-local:
+	rm -rf $(EXTENSIONS:%=lib/crack/ext/%.so) screen/output \
+	   test/screen.bin* lib/crack/runtime.so lib/crack/runtime.la \
+	   lib/testext.so lib/testext.la test/.libs \
+	   test/testext.la doc/Manual.html
+
+testbed: runtime.la $(extlib_LTLIBRARIES)
+	$(MKDIR_P) lib/crack/ext
+	$(INSTALL) .libs/runtime.so lib/crack
+	$(INSTALL) runtime.la lib/crack
+	$(INSTALL) .libs/testext.so lib
+	$(INSTALL) testext.la lib
+	for ext in $(EXTENSIONS); do \
+	  if [ -e .libs/$$ext.so ]; then \
+	    ln -f .libs/$$ext.so lib/crack/ext; \
+	  fi \
+	done
+
+# Note that the caching tests have to happen twice.
+check: testbed
+	./unittests
+	BUILD_ROOT=`pwd` $(srcdir)/test/screen
+	BUILD_ROOT=`pwd` $(srcdir)/test/screen -d screen/tests/caching
+	BUILD_ROOT=`pwd` $(srcdir)/test/screen -d screen/tests/caching
+	BUILD_ROOT=`pwd` $(srcdir)/test/screen -d screen/tests/compound

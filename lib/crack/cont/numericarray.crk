@@ -1,0 +1,685 @@
+// Copyright 2011-2012 Google Inc.
+// Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+import crack.lang cmp, free, IndexError, InvalidArgumentError, AssertionError, 
+       Formatter;
+import crack.math abs, log2;
+import crack.io cout, Writer, FStr, StandardFormatter;
+import crack.algorithm QuickSort;
+import crack.cont.array Array;
+@import crack.ann define;
+
+void _bind(Object obj) { obj.oper bind(); }
+void _release(Object obj) { obj.oper release(); }
+bool _isObject(Object obj) { return true; }
+bool _isNull(Object obj) {
+    return (obj is null);
+}
+
+@define _nobind(type) { 
+    void _bind(type i) { }
+    void _release(type i) { }
+    bool _isObject(type i) { return false; }
+    bool _isNull(type i) { return false; } 
+}
+
+@_nobind(byte)
+@_nobind(int)
+@_nobind(intz)
+@_nobind(int16)
+@_nobind(int32)
+@_nobind(uint)
+@_nobind(uintz)
+@_nobind(uint16)
+@_nobind(uint32)
+@_nobind(int64)
+@_nobind(uint64)
+@_nobind(float)
+@_nobind(float32)
+@_nobind(float64)
+@_nobind(byteptr)
+
+/// An 1D array that can be assumed to contain elements that have numeric
+/// properties
+class NumericVector[Elem] : Array[Elem] {
+
+    oper init () {
+    }
+
+    oper init (uint initCapacity): Array[Elem](initCapacity){
+    }
+
+    @static
+    NumericVector range(Elem startVal, Elem endVal, Elem delta){
+        if (delta <= 0)
+            throw InvalidArgumentError('Array.range step size cannot be <= 0');
+
+        int realSize = (endVal - startVal);
+
+        V := NumericVector(realSize);
+
+        if (realSize < 0){
+            val := endVal;
+            for (uint i = 0; val > startVal; i++){
+                V.append(val);
+                val -= delta;
+            }
+        }
+        else {
+            val := startVal;
+            for (uint i = 0; val < endVal; i++){
+                V.append(val);
+                val += delta;
+            }
+        }
+        return V;
+    }
+    
+    @static
+    NumericVector range(uint endVal){
+        return range(0, Elem(endVal), 1);
+    }
+
+    @static
+    NumericVector linspace(Elem startVal, Elem endVal, uint num,
+                           bool includeLast
+                           ) {
+        Elem delta = 1;
+        if (endVal > startVal){
+            delta = endVal - startVal;
+            delta /= Elem(num);
+            if (includeLast)
+                endVal += delta;
+        }
+        else {
+            delta = startVal - endVal;
+            delta /= Elem(num);
+            if (includeLast)
+                endVal -= delta;
+        }
+        return range(startVal, endVal, delta);
+    }
+
+    bool _isConformant(NumericVector vector){
+        return count() == vector.count();
+    }
+
+     void _assertConformant(NumericVector vector){
+        if (!_isConformant(vector))
+            throw AssertionError('Arrays are not conformant');
+    }
+
+
+    /// Set all elements of the vector to value
+    void set(Elem value) {
+        size := count();
+
+        for (uint i = 0; i < size; i++)
+            this[i] = value;
+    }
+
+    /// Convenience constructor to create an empty vector with the specified size
+    @static
+    NumericVector empty(uint maxInd){
+        V := NumericVector(maxInd);
+        V._setSize(maxInd);
+        return V;
+    }
+
+    @static
+    NumericVector empty(NumericVector vector){
+        V := NumericVector(vector.count());
+        V._setSize(vector.count());
+        return V;
+    }
+
+
+    /// Convenience constructor to create a vector filled with the given
+    /// value
+    @static
+    NumericVector fill(uint maxInd, Elem value){
+        V := empty(maxInd);
+        V.set(value);
+        return V;
+    }
+
+    @static
+    NumericVector fill(NumericVector vector, Elem value){
+        V := empty(vector.count());
+        V.set(value);
+        return V;
+    }
+
+    /// Convenience constructor to create a zeroed out vector
+    @static
+    NumericVector zeros(uint maxInd){
+        return fill(maxInd, 0);
+    }
+
+    @static
+    NumericVector zeros(NumericVector vector){
+        return fill(vector, 0);
+    }
+
+    /// Convenience constructor to create a vector of ones
+    @static
+    NumericVector ones(uint maxInd){
+        return fill(maxInd, 1);
+    }
+
+    @static
+    NumericVector ones(NumericVector vector, uint maxInd){
+        return fill(vector, 1);
+    }
+
+    /// Apply scalar operator to all elements
+    @define ScalarOper(op) {
+        NumericVector oper op(Elem value){
+            size := count();
+
+            nV := NumericVector.empty(size);
+            for (uint i = 0; i < size; i++)
+               nV[i] = this[i] op value;
+            return nV;
+        }
+    }
+
+    @ScalarOper(+)
+    @ScalarOper(-)
+    @ScalarOper(*)
+    @ScalarOper(/)
+
+    /// Apply scalar operator to all elements
+    @define ScalarOperEqual(op){
+        void oper op$$=(Elem value){
+            size := count();
+
+            for (uint i = 0; i < size; i++)
+               this[i] = this[i] op value;
+        }
+    }
+
+    @ScalarOperEqual(+)
+    @ScalarOperEqual(-)
+    @ScalarOperEqual(*)
+    @ScalarOperEqual(/)
+
+
+    /// Vector operators
+    @define VectorOperEqual(op){
+        void oper op$$=(NumericVector vector){
+            size := count();
+            _assertConformant(vector);
+
+            for (uint i = 0; i < size; i++)
+               this[i] = this[i] op vector[i];
+        }
+    }
+
+    @VectorOperEqual(+)
+    @VectorOperEqual(-)
+    @VectorOperEqual(*)
+    @VectorOperEqual(/)
+
+    NumericVector copy() {
+        size := count();
+        newVec := NumericVector.empty(size);
+        for (uint i = 0; i < size; i++)
+            newVec[i] = this[i];
+        return newVec;
+    }
+
+}
+
+/// A multidimensional array similar to numpy's ndarray
+/// For 1D arrays it is faster to use the above NumericVector class
+class Matrix[Elem] {
+    // underlying data
+    Array[Elem] data;
+    
+    // description of our view of the data
+    Array[uint] shape;
+    uint dims;
+    Array[uintz] strides;
+    Array[uintz] offsets;
+    
+    Matrix T; // Transpose
+    
+    @define initFromArray(ArrayType){
+        oper init(ArrayType[Elem] A): dims=1 
+        {
+            cols := A.count();
+            data = Array[Elem](cols);
+            data.extend(A);
+
+            shape = Array[uint]![cols];
+            strides = Array[uintz]![1];
+            offsets = Array[uintz]![0];
+            dims = 1;
+            T = this;
+        }
+    }
+
+    @initFromArray(Array)
+    @initFromArray(NumericVector)
+    
+    void _oneDinitWorker(uint cols){
+        data = Array[Elem](cols);
+
+        shape = Array[uint]![0];
+        strides = Array[uintz]![1];
+        offsets = Array[uintz]![0];
+        dims = 1;
+        T = this;
+
+    }
+
+    oper init(){
+        _oneDinitWorker(16);
+    }
+    
+    oper init(uint cols){
+        _oneDinitWorker(cols);
+    }
+
+    void _createTranspose();
+
+    @define initFromArrayArray(ArrayType){
+        oper init(ArrayType[ArrayType[Elem]] AA): dims = 2
+        {
+            if (AA.count() == 0 || AA[0].count() == 0)
+                throw AssertionError("Number of rows must be greater than zero");
+
+            cols := AA[0].count();
+            uint rows;
+            for (rows = 1; rows < AA.count(); rows++){
+                if (AA[rows].count() != cols)
+                    throw AssertionError("All rows must have the same length");
+            }
+
+            
+            data = Array[Elem](cols * rows);
+
+            // Copy over data
+            uint k = 0;
+            for (uint j = 0; j < rows; j++){
+                for (uint i = 0 ; i < cols; i++){
+                    data.append(AA[j][i]);
+                    k++;
+                }
+            }
+
+            shape = Array[uint]![cols, rows];
+            strides = Array[uintz]![1, cols];
+            offsets = Array[uintz]![0, 0];
+            _createTranspose();
+            T.T = this;
+        }
+    }
+
+    @initFromArrayArray(Array)
+
+    // This is a low-level constructor for use when slices, subarrays or 
+    // transposes are created
+    oper init(Array[Elem] data0, Array[uint] shape0,
+              Array[uintz] strides0, Array[uintz] offsets0):
+              data = data0, shape = shape0, 
+              strides = strides0, offsets = offsets0 {
+
+        dims = shape0.count();
+        T = null;
+    }
+    
+    void _createTranspose() {
+        
+        if (dims == 1) {
+            T = this;
+            return;
+        }
+
+        if (dims == 2){
+            newShape := Array[uint]![shape[1], shape[0]];
+            newStrides := Array[uintz]![strides[1], strides[0]];
+            newOffsets := Array[uintz]![offsets[1], offsets[1]];
+            T = Matrix(data, newShape, newStrides, newOffsets);
+        }
+    }
+    
+    Array[Elem] _copyData(uint newCap){
+        newData := Array[Elem](newCap);
+
+        uint i;
+        for (uint i = 0; i < data.count(); i++)
+            newData[i] = data[i];
+
+        return newData;
+    }
+
+    @static Matrix I(uint dim) {
+        newData := Array[Elem](dim * dim);
+
+        for (uint j = 0; j < dim; j++) {
+            for (uint i = 0; i < dim; i++) {
+                if (i == j)
+                    newData.append(1);
+                else
+                    newData.append(0);
+            }
+        }
+        
+        return Matrix(newData, Array[uint]![dim, dim], 
+                                     Array[uintz]![1, dim], 
+                                     Array[uintz]![0, 0]);
+    }
+
+
+    @define identityNumbered(dim) {
+        @static
+        Matrix I$$dim(){
+            return I(dim);
+        }
+    }
+
+
+    @identityNumbered(2)
+    @identityNumbered(3)
+    @identityNumbered(4)
+
+    void set(Elem value) {
+        uint i;
+
+        size := data.count();
+        for (i = 0; i < size; i++)
+            data[i] = value;
+    }
+    
+    @static
+    Matrix empty(Array[uint] d){
+        if (d.count() == 0)
+            throw AssertionError(I"Attempt to create a Matrix with 0 \
+                                   dimensions");
+
+        uint cap = 1;
+
+        newShape := d;
+        newStrides := Array[uintz](d.count());
+        newOffsets := Array[uintz](d.count());
+
+        for (uint i=0; i< d.count(); i++){
+            newStrides.append(cap);
+            newOffsets.append(0);
+            cap*=d[i];
+        }
+        
+        newData := Array[Elem](cap);
+        return Matrix(newData, newShape, newStrides, newOffsets);
+    }
+
+    @static
+    Matrix fill(Array[uint] d, Elem value){
+        A := empty(d);
+        A.set(value);
+        return A;
+    }
+
+    /// Convenience constructor to create a zeroed out 1D array
+    @static
+    Matrix zeros(uint maxInd){
+        return fill(Array[uint]![maxInd], 0);
+    }
+
+    /// Convenience constructor to create a 1D array of ones
+    @static
+    Matrix ones(uint maxInd){
+        return fill(Array[uint]![maxInd], 1);
+    }
+
+
+    Elem oper [](uint i){
+        if (dims != 1) 
+            throw InvalidArgumentError(FStr() 
+                I`Attempting to access element from $(dims)D array using only \
+                  one index`);
+        if (i >= size := data.count())
+            throw IndexError(FStr() `Index $i out of bounds for size $size \
+                                     array`);
+        return data[offsets[0] + strides[0] * i];
+        
+    }
+
+    void oper []=(uint i, Elem e) {
+        if (dims != 1) 
+            throw InvalidArgumentError(FStr() 
+                I`Attempting to assign element from $(dims)D array using only \
+                  one index`);
+        if (i >= size := data.count())
+            throw IndexError(FStr() I`Index $i out of bounds for size $size \
+                                      array`);
+        data[offsets[0] + strides[0] * i] = e;
+    }
+
+
+    Elem oper [](uint i, uint j){
+        if (dims != 2) 
+            throw InvalidArgumentError(FStr() I`Attempting to access element \
+                                                from $(dims)D array using 2 \
+                                                indices`
+                                       );
+        if (i * j >= data.count() || i > shape[0] || j > shape[1])
+            throw IndexError(FStr() I`Index [$i,$j] out of bounds for array \
+                                      with shape $shape`
+                             );
+        return data[strides[1] * (j + offsets[0]) + offsets[0] + strides[0] * i];
+    }
+
+    Elem oper [](uint i, uint j, uint k) {
+        if (dims != 3) 
+            throw InvalidArgumentError(FStr() I`Attempting to access element \
+                                                from $(dims)D array using 3 \
+                                                indices`
+                                       );
+        throw AssertionError("3D array access is not implemented yet");
+    }
+
+    int cmp(Object other) {
+        if (this is other)
+            return 0;
+        else if (!this.isa(Matrix))
+            return Object.cmp(other);
+
+        peer := Matrix.cast(other);
+
+        if (dims != peer.dims)
+            throw AssertionError(FStr() I`Comparing $(dims)D array with \
+                                          $(peer.dims) array\n`
+                                 );
+
+        if (dims == 1) {
+            oc := peer.shape[0];
+            c := shape[0];
+            for (uint i = 0; i < c; ++i) {
+                
+                # if I'm longer than other, and we share a common prefix, I'm 
+                # greater.
+                if (i > oc)
+                    return 1;
+
+                # compare the elements
+                elemDiff := cmp(this[i], peer[i]);
+                if (elemDiff)
+                    return elemDiff;
+            }
+            
+            # if other is longer than me, and we share a common prefix, I'm 
+            # lesser.
+            if (oc > c)
+                return -1;
+            else
+                # we're the same length and all elements are equal
+                return 0;
+        } else if (dims == 2) {
+            peerSize := 0;
+            oc := peer.shape[1];
+            c := shape[1];
+            for (uint j = 0; j < c; j++) {
+                if (j > oc)
+                    return 1;
+                od := peer.shape[0];
+                d := shape[0];
+                for (uint i = 0; i < d; ++i) {
+                    
+                    # if I'm longer than other, and we share a common prefix, 
+                    # I'm greater.
+                    if (i > od)
+                        return 1;
+
+                    # compare the elements
+                    # TODO use faster iteration
+                    elemDiff := cmp(this[i, j], peer[i, j]); 
+                    if (elemDiff)
+                        return elemDiff;
+                }
+                
+                # if other is longer than me, and we share a common prefix, 
+                # I'm lesser.
+                if (od > d)
+                    return - 1;
+            }
+            if (oc > c)
+                return -1;
+            else
+                # we're the same length and all elements are equal
+                return 0;
+        } else if (dims ==0 || dims > 2) {
+            throw AssertionError(FStr() I`Comparing $(dims)D arrays is not \
+                                          implemented`
+                                 );
+        }
+        return 0;
+    }
+
+    /// Append an element to an array, expanding it if needed
+    void append(Elem e) {
+        if (dims > 1)
+            throw InvalidArgumentError(FStr() I`Cannot append an element to a \
+                                                ($dims)D array`
+                                       );
+
+
+        data.append(e);
+        shape[0] = data.count();
+    }
+
+    /// Return a new array with an element appended
+    Matrix appended(Elem e) {
+        if (dims > 1)
+            throw InvalidArgumentError(FStr() I`Cannot append an element to a \
+                                                ($dims)D array`
+                                       );
+
+        uint index = offsets[0] + shape[0] * strides[0];
+        Array[Elem] newData;
+        if (data.capacity() > index) {
+            newData = data.clone();
+        } else {
+            # not enough capacity, allocate and copy manually to avoid doing 
+            # multiple allocs.
+            newData = Array[Elem](data.capacity() * 2);
+            for (int i = 0; i < data.count(); ++i)
+                newData.append(data[i]);
+        }
+        newData.append(e);
+
+        return Matrix(newData, Array[uint]![shape[0] + 1], 
+                            strides.clone(), 
+                            offsets.clone()
+                            );
+    }
+
+    Matrix promoted() {
+        if (dims == 1) {
+            newShape := Array[uint]![shape[0], 1];
+            newStrides := Array[uintz]![strides[0], shape[0]];
+            newOffsets := Array[uintz]![offsets[0], 0];
+
+            return Matrix(data, newShape, newStrides, newOffsets);
+        } else {
+            throw AssertionError("promote only implemented for 1D arrays");
+        }
+    }
+
+    Matrix flattened() {
+        if (dims == 1) return this;
+        
+        if (dims == 2) {
+            if (shape[1] > 1 && 
+                (offsets[0] > 0 || offsets[1] > 0 || strides[1] != shape[0]))
+
+                throw AssertionError("2D subarray with this shape and offsets \
+                                      cannot be flattened, create a copy first");
+            newShape := Array[uint]![shape[0] * shape[1]];
+            newStrides := Array[uintz]![strides[0]];
+            newOffsets := Array[uintz]![0];
+
+            return Matrix(data, newShape, newStrides, newOffsets);
+        } else {
+            throw AssertionError(I"flatten only implemented for 1D and 2D \
+                                   arrays");
+        }
+    }
+
+    void _writeLevel(Formatter fmt, Array[uintz] wstrides, Array[uintz] woffsets, 
+                     Array[uint] wshape, uint dim);
+
+    void _writeLevel(Formatter fmt, Array[uintz] wstrides, Array[uintz] woffsets, 
+                     Array[uint] wshape, uint dim) {
+        fmt `[`;
+        if (dim == 1) {
+            bool first = true;
+            uintz offset = woffsets[dim - 1];
+            uintz stride = wstrides[dim - 1];
+            for (uint i = 0; i < wshape[0]; i++) {
+                if (!first)
+                    fmt `, `;
+                else
+                    first = false;
+                Elem elem = data[offset + stride * i];
+                if (_isNull(elem)) 
+                    fmt `null`;
+                else
+                    fmt `$elem`;
+            }
+        } else {
+            bool first = true;
+
+            Array[uintz] noffsets = woffsets.subarray(0, dim - 1).clone();
+            nstrides := wstrides.subarray(0, dim - 1);
+            nshape := shape.subarray(0, dim - 1);
+            stride := wstrides[dim - 1];
+
+            for (uint i = 0; i < wshape[dim - 1]; i++) {
+                if (!first)
+                    fmt `, `;
+                else
+                    first = false;
+                _writeLevel(fmt, nstrides, noffsets, nshape, dim - 1);
+                uintz noffset = noffsets[dim - 2] + stride;
+                noffsets[dim - 2] = noffset;
+            }
+        }
+        
+        fmt `]`;
+    }
+
+    void formatTo(Formatter fmt) {
+        _writeLevel(fmt, strides, offsets, shape, dims);
+    }
+
+    oper del(){
+        T = null;
+    }
+}

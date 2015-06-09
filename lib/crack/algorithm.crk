@@ -1,0 +1,264 @@
+// Algorithms
+// Copyright 2011 Shannon Weyrick <weyrick@mozek.us>
+// Copyright 2011-2012 Google Inc.
+//
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+//
+
+import crack.io cout;
+import crack.lang cmp;
+
+## Base class version of quick-sort, can be applied to primitive arrays.
+class QuickSortPrim[SeqT] {
+
+    alias Elem = typeof(SeqT(1)[0]);
+    alias CmpFunc = function[int, Elem, Elem];
+
+    @static
+    void _swap(SeqT A, uintz l, uintz r) {
+        temp := A[l];
+        A[l] = A[r];
+        A[r] = temp;
+    }
+
+    @static int defaultCmp(Elem a, Elem b) {
+        return cmp(a, b);
+    }
+
+    @static void _quickSort3(SeqT seq, intz l, intz r, CmpFunc cmp) {
+
+        // this is based on a 3-partition version from a talk by Robert
+        // Sedgewick and Jon Bentley
+        // http://www.cs.princeton.edu/~rs/talks/QuicksortIsOptimal.pdf
+        intz i = l - 1;
+        intz j = r;
+        intz p = l-1;
+        intz q = r;
+
+        if (r <= l)
+            return;
+
+        # 'v' is our pivot - set 'v' to the right-most value in the span
+        v := seq[r];
+
+        while (true) {
+            # set i to the leftmost index that is >= v
+            while (cmp(seq[++i], v) < 0);
+
+            # set j to the rightmost index left of v that is <= v
+            while (cmp(v, seq[--j]) < 0)
+                if (j == l)
+                    break;
+
+            # if we've met or passed in the middle, we're done
+            if (i >= j)
+                break;
+
+            # swap i and j to put them on the correct sides of the pivot
+            _swap(seq, i, j);
+
+            # if the i and j values are equal to the key, migrate them to the
+            # far left or right of the range.
+            if (cmp(seq[i], v) == 0) {
+                p++;
+                _swap(seq, p, i);
+            }
+            if (cmp(v, seq[j]) == 0) {
+                q--;
+                _swap(seq, j, q);
+            }
+        }
+
+        # move the pivot to the center
+        _swap(seq, i, r);
+
+        # set i and j to immediately left and right of center
+        j = i - 1;
+        i = i + 1;
+
+        # move all of the far left elements equal to the pivot to left of
+        # center.
+        for (k := l; k < p; k++) {
+            if (k != j)
+                _swap(seq, k, j);
+            j--;
+        }
+
+        # move all of the far right elements equal to the pivot to right of
+        # center.
+        for (k := r-1; k > q; k--) {
+            _swap(seq, i, k);
+            i++;
+        }
+
+        _quickSort3(seq, l, j, cmp);
+        _quickSort3(seq, i, r, cmp);
+    }
+
+    ## Sort the the array of the given size.
+    @static void sort(SeqT seq, uintz count) {
+        if (count > 1)
+            _quickSort3(seq, 0, count - 1, defaultCmp);
+    }
+
+    ## Sort the array of the given size using the given comparison function.
+    @static void sort(SeqT A, uintz count, CmpFunc cmp) {
+        if (count > 1)
+            _quickSort3(A, 0, count - 1, cmp);
+    }
+
+}
+
+## Quick-sort.  SeqT must have [], []= and count()
+class QuickSort[SeqT] : QuickSortPrim[SeqT] {
+    @static void sort(SeqT seq) {
+        if (seq.count() > 1)
+            _quickSort3(seq, 0, seq.count() - 1, defaultCmp);
+    }
+
+    @static void sort(SeqT seq, CmpFunc cmp) {
+        if (seq.count() > 1)
+            _quickSort3(seq, 0, seq.count() - 1, cmp);
+    }
+}
+
+## Insertion sort primitive.  Can be used on primitive arrays.
+class InsertionSortPrim[Elem] {
+
+    @static void _swap(Elem seq, uintz l, uintz r) {
+        temp := seq[l];
+        seq[l] = seq[r];
+        seq[r] = temp;
+    }
+
+    @static void _insertionSort(Elem seq, uintz count) {
+        if (count > 1) {
+            uintz j = 1;
+            uintz i;
+            while (j < count) {
+                key := seq[j];
+                i = j-1;
+                while (cmp (seq[i], key) > 0) {
+                    _swap(seq, i+1, i);
+                    if (i == 0)
+                        break;
+                    i--;
+                }
+                seq[i+1] = key;
+                j++;
+            }
+        }
+    }
+
+    ## Sort an array of the given size.
+    @static void sort(Elem seq, uintz count){
+        _insertionSort(seq, count);
+    }
+}
+
+## Insertion sort.  Requires [], []= and count().
+## Usage: typeof(seq).sort(seq);
+class InsertionSort[SeqT] : InsertionSortPrim[SeqT] {
+
+    ## Sort the given array.
+    @static void sort(SeqT seq) {
+        _insertionSort(seq, seq.count());
+    }
+}
+
+
+## Heap routines.
+class HeapPrim[Elem] {
+
+    @static void _swap(Elem seq, uintz l, uintz r) {
+        --l; --r;
+        temp := seq[l];
+        seq[l] = seq[r];
+        seq[r] = temp;
+    }
+
+    ## Returns true if 'seq' of size 'count' is already a max heap.  It is a
+    ## max heap if all values at an index of half the size are greater than
+    ## values at the current index.
+    @static bool isMaxHeap(Elem seq, uintz count) {
+        // for i := 1..count, assert seq[Parent(i)] >= seq[i]
+        for (i := count; i > 1; --i) {
+            parent := i >> 1;
+            if (seq[parent - 1] < seq[i - 1]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    ## Convert the sequence from index i of the specified size to a max heap.
+    ## index i is 1 based, not 0 based
+    @static void maxHeapify(Elem seq, uintz i, uintz count) {
+        uintz l = i << 1;
+        uintz r = l + 1;
+        uintz largest;
+        if (l <= count && seq[l - 1] > seq[i - 1])
+            largest = l;
+        else
+            largest = i;
+        if (r <= count && seq[r - 1] > seq[largest - 1])
+            largest = r;
+        if (largest != i) {
+            _swap(seq, i, largest);
+            maxHeapify(seq, largest, count);
+        }
+    }
+
+    ## Convert a sequence of size 'count' to a max heap.
+    @static void buildMaxHeap(Elem seq, uintz count) {
+        for (i := count >> 1; i > 0; --i) {
+            maxHeapify(seq, i, count);
+        }
+    }
+}
+
+## Heaps.  Requires [], []= and count().
+class Heap[SeqT] : HeapPrim[SeqT] {
+
+    ## Convert the sequence to a max heap.
+    @static void buildMaxHeap(SeqT seq) {
+        buildMaxHeap(seq, seq.count());
+    }
+
+    ## Returns true if the sequence is a max heap.
+    @static bool isMaxHeap(SeqT seq) {
+        return isMaxHeap(seq, seq.count());
+    }
+}
+
+## Heap sort implementation, safe for use with primitive arrays.
+class HeapSortPrim[Elem] : HeapPrim[Elem] {
+    @static void _heapSort(Elem seq, uintz count) {
+        if (count > 1) {
+            heapSize := count;
+            for (i := count; i > 1; --i) {
+                _swap(seq, 1, i);
+                heapSize--;
+                maxHeapify(seq, 1, heapSize);
+            }
+        }
+    }
+
+    ## Heap sort an array of the specified size.
+    @static void sort(Elem seq, uintz count) {
+        if (!isMaxHeap(seq, count))
+            buildMaxHeap(seq, count);
+        _heapSort(seq, count);
+    }
+}
+
+## Heap sort implementation.
+class HeapSort[SeqT] : HeapSortPrim[SeqT] {
+
+    ## Sort the array.
+    @static void sort(SeqT seq) {
+        _heapSort(seq, seq.count());
+    }
+}

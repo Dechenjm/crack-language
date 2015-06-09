@@ -1,0 +1,269 @@
+// Copyright 2011 Google Inc.
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+#!/usr/local/bin/crack
+
+import crack.lang free;
+import crack.io cout;
+import crack.strutil StringArray;
+import crack.ext._gtk
+    gtk_box_pack_start,
+    gtk_button_new_with_label,
+    gtk_container_add,
+    gtk_editable_set_editable,
+    gtk_editable_select_region,
+    gtk_entry_get_text,
+    gtk_entry_new,
+    gtk_entry_set_text,
+    gtk_entry_set_visibility,
+    gtk_hbox_new,
+    gtk_label_new,
+    gtk_tooltips_new,
+    gtk_tooltips_set_tip,
+    gtk_vbox_new,
+    g_print, 
+    gtk_init, 
+    gtk_main,
+    gtk_main_quit, 
+    gtk_widget_show,
+    gtk_widget_destroy,
+    gtk_window_new, 
+    gtk_object_destroy,
+    g_list_append, 
+    g_signal_connect_data,
+    GtkWidget,
+    GList,
+    GtkObject,
+    GtkObject_cast;
+
+void destroy(GtkWidget widget, byteptr data) {
+    gtk_main_quit();
+}
+
+## GTK List datastructure.
+class List {
+    GList _start = null;
+    GList _end = null;
+    
+    void append(voidptr elem) {
+        _start = g_list_append(_start, elem);
+        if (_end is null)
+            _end = _start;
+    }
+};
+
+## window signal handlers.  Return true to abort futher processing.
+class Handlers {
+    bool onClicked() { return false; }
+    bool onDestroy() { return false; }
+};
+
+bool _handleClicked(GtkWidget widget, Handlers handlers) {
+    return handlers.onClicked();
+}
+
+bool _handleDestroy(GtkObject widget, Handlers handlers) {
+    if (handlers)
+        return handlers.onDestroy();
+    else
+        return false;
+}
+
+class GTKObject : Handlers {
+    GtkObject _rep = null;
+    Handlers __handlers = null;
+    
+    void setHandlers(Handlers handlers) {
+        __handlers = handlers;
+    }
+
+    bool onClicked() {
+        if (__handlers)
+            return __handlers.onClicked();
+        else
+            return false;
+    }
+
+    void handleClicked() {
+        g_signal_connect_data(_rep, 'clicked'.buffer, _handleClicked, 
+                              this, 
+                              null, 
+                              0
+                              );
+    }
+
+    bool onDestroy() {
+        bool result = false;
+        if (__handlers)
+            result = __handlers.onDestroy();
+        _rep = null;
+        return result
+    }
+
+    oper init(GtkObject rep) : _rep = rep {
+        # connnect our destroy handler
+        g_signal_connect_data(_rep, 'destroy'.buffer, _handleDestroy,
+                              this, 
+                              null, 
+                              0
+                              );
+    }
+
+    oper del() {
+        if (!(_rep is null))
+            gtk_object_destroy(_rep); 
+    }
+}
+
+class Widget : GTKObject {
+    
+    oper init(GtkWidget rep) : GTKObject(GtkObject_cast(rep)) {}
+
+    void show() {
+        gtk_widget_show(GtkWidget.unsafeCast(_rep));
+    }
+    
+    void destroy() {
+        if (!(_rep is null))
+            # _rep gets set to null in onDestroy()
+            gtk_widget_destroy(GtkWidget.unsafeCast(_rep));
+    }
+
+    oper del() {
+        destroy();
+    }
+    
+};
+
+class Container : Widget {
+    void add(Widget child) {
+        gtk_container_add(GtkWidget.unsafeCast(_rep), 
+                          GtkWidget.unsafeCast(child._rep));
+    }
+    
+    oper init(GtkWidget rep) : Widget(rep) {}
+};
+
+class Toplevel : Container {
+    oper init() : Container(gtk_window_new(0)) {}
+};
+
+class Button : Widget {
+    oper init(String label) : Widget(gtk_button_new_with_label(label.buffer)) {}
+};
+
+class Box : Container {
+    void add(Widget child) {
+        gtk_box_pack_start(GtkWidget.unsafeCast(_rep), 
+                           GtkWidget.unsafeCast(child._rep), 
+                           false, 
+                           false, 
+                           0
+                           );
+    }
+
+    ## expand: if true, expand the box to fill the container, otherwise shrink 
+    ##  to enclose the children.
+    void add(Widget child, bool expand) {
+        gtk_box_pack_start(GtkWidget.unsafeCast(_rep), 
+                           GtkWidget.unsafeCast(child._rep), 
+                           expand, 
+                           false, 
+                           0
+                           );
+    }
+
+    ## fill: if true, expand the child, otherwise add padding.
+    void add(Widget child, bool expand, bool fill) {
+        gtk_box_pack_start(GtkWidget.unsafeCast(_rep), 
+                           GtkWidget.unsafeCast(child._rep), 
+                           expand, 
+                           fill, 
+                           0
+                           );
+    }
+
+    ## padding: amount of padding added around each child.
+    void add(Widget child, bool expand, bool fill, uint padding) {
+        gtk_box_pack_start(GtkWidget.unsafeCast(_rep), 
+                           GtkWidget.unsafeCast(child._rep), 
+                           expand, 
+                           fill, 
+                           0
+                           );
+    }
+
+    oper init(GtkWidget rep) : Container(rep) {}    
+};
+
+class HBox : Box {
+    oper init(bool homogeneous, uint spacing) : 
+        Box(gtk_hbox_new(homogeneous, spacing)) {
+    }
+};
+
+class VBox : Box {
+    oper init(bool homogeneous, uint spacing) : 
+        Box(gtk_vbox_new(homogeneous, spacing)) {
+    }
+};
+
+class Label : Widget {
+    oper init(String text) : Widget(gtk_label_new(text.buffer)) {}
+};
+
+class Tooltips : GTKObject {
+    oper init() : GTKObject(gtk_tooltips_new()) {}
+    
+    void setTip(Widget widget, String text) {
+        gtk_tooltips_set_tip(_rep, GtkWidget.unsafeCast(widget._rep), 
+                             text.buffer, 
+                             null
+                             );
+    }
+};
+
+class Entry : Widget {
+    oper init() : Widget(gtk_entry_new()) {}
+    
+    String getText() {
+        return String(gtk_entry_get_text(GtkWidget.unsafeCast(_rep)));
+    }
+    
+    void setText(String text) {
+        gtk_entry_set_text(GtkWidget.unsafeCast(_rep), text.buffer);
+    }
+    
+    void setEditable(bool editable) {
+        gtk_editable_set_editable(GtkWidget.unsafeCast(_rep), editable);
+    }
+    
+    void setVisibility(bool visible) {
+        gtk_entry_set_visibility(GtkWidget.unsafeCast(_rep), visible);
+    }
+    
+    void selectRegion(int start, int end) {
+        gtk_editable_select_region(GtkWidget.unsafeCast(_rep), start, end);
+    }
+};
+
+class App {
+    void init(StringArray argv) {
+        array[int] argc = [argv.count()];
+        array[array[byteptr]] argvWrapper = [argv.makePrimArray()];
+        gtk_init(argc, argvWrapper);
+        free(argc);
+        free(argvWrapper);
+    }
+    
+    void main() {
+        gtk_main();
+    }
+    
+    void quit() {
+        gtk_main_quit();
+    }
+}

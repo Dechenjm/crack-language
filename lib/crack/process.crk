@@ -1,0 +1,435 @@
+## This module provides a Process class for managing sub processes
+## Copyright 2011-2012 Google Inc.
+## Copyright 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+## 
+##   This Source Code Form is subject to the terms of the Mozilla Public
+##   License, v. 2.0. If a copy of the MPL was not distributed with this
+##   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+## 
+
+import crack.runtime close, runChildProcess, waitProcess, signalProcess,
+    SIGKILL, SIGTERM, PipeDesc, free, closeProcess;
+
+import crack.ascii wsplit;
+import crack.io FDReader, FDWriter, FileHandle, Reader, StringFormatter, FStr;
+import crack.lang Buffer, ManagedBuffer, AppendBuffer, InvalidStateError;
+import crack.strutil StringArray;
+import crack.net Poller, PollEvent, POLLIN, POLLOUT, POLLERR, POLLHUP;
+import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
+import crack.functor Functor2;
+
+import crack.io cerr;
+
+@import crack.ann define, interface, impl;
+
+// see Process.h in  runtime
+const int
+    CRK_PROC_STILL_RUNNING = 0x100,
+    CRK_PROC_KILLED = 0x200,
+    CRK_PROC_STOPPED = 0x400,
+    CRK_PROC_EXITED = 0x800,
+    CRK_PROC_FAILED = 0x1000,
+    
+    ## Process exit code when we fail to "exec" a binary.
+    CRK_PROC_EXECFAIL = 0xff;
+
+const int
+    CRK_PIPE_STDIN = 1,
+    CRK_PIPE_STDOUT = 2,
+    CRK_PIPE_STDERR = 4;
+
+class Process;
+FDWriter _makeWriter(Process proc, int fd);
+
+@interface ProcessHandler {
+    @abstract void onOutData(Buffer data);
+    @abstract void onOutLine(Buffer data);
+    @abstract void onErrData(Buffer data);
+    @abstract void onErrLine(Buffer data);
+    
+    ## Called when the process is terminated with the process result code.  
+    ## The process result code is composed of one of the CRK_PROC values above 
+    ## ored with the process exit code.  In the case of CRK_PROC_KILLED, the 
+    ## process exit code should be the signal that killed the process.
+    ##
+    ## It is not necessary for this handler to remove any process handles from
+    ## the Poller, this is done automatically.
+    @abstract void onTerminate(int resultCode);
+}
+
+## Implements ProcessHandler and provides the translation from the data 
+## handlers to the line handlers, making it easy to implement any combination 
+## of line reader and data reader for a process.
+class ProcessHandlerImpl @impl ProcessHandler {
+    AppendBuffer outBuf = {1024}, errBuf = {1024};
+    bool outDone, errDone;
+
+    @define output_handlers(dst, cap) {
+
+        void on$$cap$$Data(Buffer data) {
+            dst$$Buf.extend(data);
+            uint pos;
+            while ((index := dst$$Buf.lfind(b'\n', pos)) != -1) {
+                on$$cap$$Line(Buffer(dst$$Buf.buffer + pos, index + 1 - pos));
+                pos = index + 1;
+            }
+            if (pos)
+                dst$$Buf.compact(pos);
+        }
+        
+        void on$$cap$$Line(Buffer line) {}
+    }
+    
+    @output_handlers(out, Out);
+    @output_handlers(err, Err);
+    
+    void onTerminate(int resultCode) {}
+}
+
+class Process {
+
+    int _pid = -1;
+    PipeDesc _pd;
+    int _returnCode = CRK_PROC_STILL_RUNNING;
+    FDReader __stdout, __stderr;
+
+    # Stores process status information.
+    class __Status {
+        bool outDone, errDone;
+        int pid, exitCode;
+        ProcessHandler handler;
+
+        # We store 'process' just to ensure that the process doesn't get 
+        # deleted (and its output streams closed) while we're processing.
+        Process process;
+        
+        oper init(Process process, ProcessHandler handler, int pid, 
+                  bool outDone, 
+                  bool errDone
+                  ) : 
+            handler = handler, 
+            pid = pid,
+            outDone = outDone,
+            errDone = errDone,
+            process = process {
+        }
+        
+        void onStreamsClosed() {
+            # XXX if a child process closes its stdout and stderr streams 
+            # before termmination, this can hang the polling thread.  What we 
+            # should do is handle SIGCHLD in the poller and then call
+            # onTerminate() from that.
+            exitCode = waitProcess(pid, 0);
+            if (handler)
+                handler.onTerminate(exitCode);
+        }
+        
+        void onOutDone() { 
+            outDone = true; 
+            if (errDone) onStreamsClosed();
+        }
+        
+        void onErrDone() {
+            errDone = true;
+            if (outDone) onStreamsClosed();
+        }
+    }
+
+    # defines __OutCallback and __ErrCallback, two callback functors
+    # that react to input events by reading from the appropriate stream and 
+    # passing the data the cooresponding methods in ProcessHandler.
+    @define __callback(dst) {
+        class __$$dst$$Callback @impl Functor2[int, Poller, PollEvent] {
+            ManagedBuffer buf = {1024};
+            __Status status;
+            
+            oper init(__Status status) : 
+                status = status {
+            }
+
+            int oper call(Poller poller, PollEvent event) {
+                if (event.revents & POLLIN) {
+                    FDReader.cast(event.pollable).read(buf);
+                    if (status.handler)
+                        status.handler.on$$dst$$Data(buf);
+                    if (!buf) {
+                        poller.remove(event.pollable);
+                        status.on$$dst$$Done();
+                    }
+                
+                # POLLERR, POLLHUP, etc - just shut down.
+                } else if (event.revents) {
+                    if (status.handler)
+                        status.handler.on$$dst$$Data('');
+                    poller.remove(event.pollable);
+                    status.on$$dst$$Done();
+                }
+                return POLLIN | POLLERR | POLLHUP;
+            }
+        }
+    }
+    @__callback(Out)
+    @__callback(Err)
+
+    void __init(array[byteptr] args, array[byteptr] env, uint flags) {
+        _pd.flags = flags;
+        _pid = runChildProcess(args, env, _pd);
+        if (_pid == -1) {
+            _returnCode = CRK_PROC_FAILED;
+        } else {
+            if (flags & CRK_PIPE_STDOUT)
+                __stdout = FDReader(_pd.stdout);
+            if (flags & CRK_PIPE_STDERR)
+                __stderr = FDReader(_pd.stderr);
+        }
+    }
+
+    ## splits on whitespace, quotes are NOT accounted for
+    oper init(String cmd): _pd() {
+        args := wsplit(cmd);
+        array[byteptr] env = null;
+        __init(args.makePrimArray(), env, CRK_PIPE_STDOUT | CRK_PIPE_STDERR);
+    }
+
+    ## Run the command identified by 'args'.
+    oper init(StringArray args): _pd() {
+        array[byteptr] env;
+        __init(args.makePrimArray(), env, CRK_PIPE_STDOUT | CRK_PIPE_STDERR);
+    }
+
+    oper init(StringArray args, StringArray env): _pd() {
+        __init(args.makePrimArray(), env.makePrimArray(), 
+               CRK_PIPE_STDOUT | CRK_PIPE_STDERR
+               );
+    }
+
+    oper init(StringArray args, uint flags): _pd() {
+        array[byteptr] env;
+        __init(args.makePrimArray(), env, flags);
+    }
+
+    oper init(StringArray args, StringArray env, uint flags): _pd() {
+        __init(args.makePrimArray(), env.makePrimArray(), flags);
+    }
+
+    oper init(StringArray args, HashMap[String, String] envMap): _pd() {
+        StringArray env = {};
+
+        for (item :in envMap){
+            env.append(FStr() `$(item.key)=$(item.val)`);
+        }
+
+        _pid = runChildProcess(args.makePrimArray(),
+                               env.makePrimArray(),
+                               _pd);
+        if (_pid == -1) {
+            _returnCode = CRK_PROC_FAILED;
+        }
+    }
+
+    PipeDesc getPipeDesc() {
+        return _pd;
+    }
+
+    int __addTo(Poller poller, __Status status) {
+        int count;
+        if (__stdout) {
+            poller.add(__stdout, __OutCallback(status));
+            ++count;
+        }
+        if (__stderr) {
+            poller.add(__stderr, __ErrCallback(status));
+            ++count;
+        }
+        return count;
+    }
+
+    ## Add the file descriptors for management in the poller.
+    ## XXX we should also be adding a SIGCHLD handler.
+    void addTo(Poller poller, ProcessHandler handler) {
+        __addTo(poller, __Status(this, handler, _pid, !__stdout, !__stderr));
+    }
+    
+    ## Remove the file descriptors from the poller.
+    void removeFrom(Poller poller) {
+        if (__stdout)
+            poller.remove(__stdout);
+        if (__stderr)
+            poller.remove(__stderr);
+    }
+    
+    ## Run the process to completion, managing communication and dispatching 
+    ## events to the handler.
+    ## XXX needs to deal with stdin.
+    int run(ProcessHandler handler) {
+        Poller poller = {};
+        __Status status = {this, handler, _pid, !__stdout, !__stderr};
+        if (__addTo(poller, status)) {
+            # keep reading until both of the output streams have closed.
+            while (poller)
+                poller.waitAndProcess(null);
+        } else {
+            # no output streams - just wait for termination.
+            status.onStreamsClosed();
+        }
+        
+        return status.exitCode;
+    }
+    
+    ## Run the process to completion, return the exit code.
+    @final int run() { return run(null); }
+
+    String _readPipe(Reader rd) {
+        // paged reads
+        buf := ManagedBuffer(1024);
+        // extendable buffer used for final string
+        wr := AppendBuffer(1024);
+        uint size;
+        while ((size = rd.read(buf)) != 0)
+            wr.extend(buf);
+        return String(wr, true); // takes ownership of appendbuffer
+    }
+
+    ## Returns the entirety of the child process' standard output.
+    ## This won't work if you use "run()" or "addTo()" to manage the output 
+    ## streams with a Poller, it's intended for use with commands to be run 
+    ## synchronously with limited output.
+    String getStdOut() {
+        if (__stdout)
+            return _readPipe(__stdout);
+        else
+            return "";
+    }
+    
+    FileHandle getOutHandle() { return __stdout; }
+    
+    ## Returns the entirety of the child process' standard error.
+    ## See getStdOut() for caveats.
+    String getStdErr() { 
+        if (__stderr)
+            return _readPipe(__stderr);
+        else
+            return "";
+    }
+
+    FileHandle getErrHandle() { return __stderr; }
+
+    ## Returns a writer to the process that writes to standard input.
+    FDWriter writer() {
+        return _makeWriter(this, _pd.stdin);
+    }
+
+    int getPid() { return _pid; }
+
+    int getReturnCode() { return _returnCode & 0xff; }
+
+    int poll() {
+        if (_returnCode & CRK_PROC_STILL_RUNNING)
+            _returnCode = waitProcess(_pid, 1);
+        return getReturnCode();
+    }
+
+    int wait() {
+        if (_returnCode & CRK_PROC_STILL_RUNNING)
+            _returnCode = waitProcess(_pid, 0);
+        return getReturnCode();
+    }
+
+    void _maybePoll() {
+        if (_returnCode & CRK_PROC_KILLED ||
+            _returnCode & CRK_PROC_STOPPED ||
+            _returnCode & CRK_PROC_EXITED ||
+            _returnCode == CRK_PROC_FAILED
+            )
+            return;
+        poll();
+    }
+
+    bool failed() {
+        _maybePoll();
+        return (_returnCode == CRK_PROC_FAILED);
+    }
+
+    bool killed() {
+        _maybePoll();
+        return (_returnCode & CRK_PROC_KILLED);
+    }
+
+    bool stopped() {
+        _maybePoll();
+        return (_returnCode & CRK_PROC_STOPPED);
+    }
+
+    bool isRunning() {
+        _maybePoll();
+        return (_returnCode & CRK_PROC_STILL_RUNNING);
+    }
+
+    void putStdIn(String data) {
+        if (_pd.stdin == -1)
+            throw InvalidStateError('Process was not created with '
+                                     'CRK_PIPE_STDIN'
+                                    );
+        if (isRunning()) {
+            rd := FDWriter(_pd.stdin);
+            rd.write(data);
+        }
+    }
+
+    void sendSignal(int sig) {
+        if (_returnCode & CRK_PROC_STILL_RUNNING)
+            signalProcess(_pid, sig);
+    }
+
+    void closeStdIn() {
+        if (_pd.stdin == -1)
+            throw InvalidStateError('Process was not created with '
+                                     'CRK_PIPE_STDIN'
+                                    );
+        if (isRunning()) {
+            close(_pd.stdin);
+            _pd.stdin = -1;
+        }
+    }
+
+    void sendSignal(int sig) {
+        if (_returnCode & CRK_PROC_STILL_RUNNING)
+            signalProcess(_pid, sig);
+    }
+
+    void terminate() {
+        // XXX this needs to be a runtime call, as on Windows it will do
+        // something different
+        if (_returnCode & CRK_PROC_STILL_RUNNING)
+            signalProcess(_pid, SIGTERM);
+    }
+
+    void kill() {
+        // XXX this needs to be a runtime call, as on Windows it will do
+        // something different
+        if (_returnCode & CRK_PROC_STILL_RUNNING)
+            signalProcess(_pid, SIGKILL);
+    }
+
+    // close the pipes. read/write operations on this class after a call to
+    // close are undefined
+    @final void close() {
+        if (!(_pd is null)) {
+            closeProcess(_pd);
+            free(_pd);
+            _pd = null;
+        }   
+    }
+
+    oper del() {
+        close();
+    }
+}
+
+class _ProcWriter : FDWriter {
+    Process __process;
+    oper init(Process process, int fd) : FDWriter(fd), __process = process {}
+}
+
+FDWriter _makeWriter(Process proc, int fd) { return _ProcWriter(proc, fd); }

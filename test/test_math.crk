@@ -1,0 +1,136 @@
+// Copyright 2010-2011 Google Inc.
+// Copyright 2010-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+// test of math library
+@import crack.ann define;
+import crack.lang Formatter;
+import crack.io cout, StringFormatter;
+import crack.exp.file File;
+
+// import all the symbols in the module
+import crack.math  sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh,
+                    acosh, atanh, atoi, atof, strtof, usecs, exp, exp2,
+                    ilogb, log, log10, log1p, log2, cbrt, abs, hypot,  sqrt,
+                    erf, erfc, lgamma, tgamma, ceil, floor, nearbyint, rint,
+                    round, trunc, expm1, fpclassify, isfinite, isinf, isnan,
+                    isnormal, sign, fmod, remainder, copysign, nextafter,
+                    fdim, pow, testexcept, clearexcept, errno, setErrno, max, min, 
+                    HUGE_VAL, INFINITY, NAN, FP_INFINITE, FP_NAN,
+                    FP_NORMAL, FP_SUBNORMAL, FP_ZERO, FP_ILOGB0, FP_ILOGBNAN,
+                    ALL_EXCEPT, INVALID, DIVBYZERO, OVERFLOW,
+                    UNDERFLOW, ERANGE,  
+                    E, LOG2E, LOG10E, LN2, LN10, LNPI, PI, PI_2, PI_4, PI1, 
+                    PI2, SQRTPI2, SQRT2, SQRT3, SQRT1_2, SQRTPI, GAMMA;
+
+import crack.random random, srandom, setstate, initstate;
+
+fmt := StringFormatter();
+
+@define createOutputValues3(name, func1, func2, func3){
+   void name(float32 input_float_32, float64 input_float_64, float input_float, Formatter out, uint i){
+      f1:=$func1;
+      f2:=$func2;
+      f3:=$func3;
+      out `f32[$i] = \t$(input_float_32): \t $f1 = $(func1(input_float_32)) \t $f2 = $(func2(input_float_32)) \t $f3 = $(func3(input_float_32))\n`;
+      out `f64[$i] = \t$(input_float_64): \t $f1 = $(func1(input_float_64)) \t $f2 = $(func2(input_float_64)) \t $f3 = $(func3(input_float_64))\n`;
+      out `fsys[$i] = \t$(input_float): \t $f1 = $(func1(input_float)) \t $f2 = $(func2(input_float)) \t $f3 = $(func3(input_float))\n`;
+   }
+}
+
+// instantiate test functions
+@createOutputValues3(SinCosTan, sin, cos, tan)
+@createOutputValues3(aSinaCosaTan, asin, acos, atan)
+@createOutputValues3(SinhCoshTanh, sinh, cosh, tanh)
+@createOutputValues3(aSinhaCoshaTanh, asinh, acosh, atanh)
+
+
+// Input arrays
+trig_inputs_float_32:=array[float32](41);
+trig_inputs_float_64:=array[float64](41);
+trig_inputs_float:=array[float](41);
+
+// Populate the arrays
+float32 val32=-2.0*float32(PI);
+float32 delta32=0.1*float32(PI);
+float64 val64=-2.0*PI;
+float64 delta64=0.1*PI;
+float val=-2.0*PI;
+float delta=0.1*PI;
+
+uint i=0;
+uint intervals=40;
+
+while (i<=intervals){
+  val=float(i)*delta;
+  trig_inputs_float[i]=val+float(i)*delta;
+  trig_inputs_float_32[i]=val32+float32(i)*delta32;
+  trig_inputs_float_64[i]=val64+float32(i)*delta64;
+  i++;
+}
+
+// Call Trig functions
+i=0;
+while (i<=intervals){
+   SinCosTan(trig_inputs_float_32[i], trig_inputs_float_64[i], trig_inputs_float[i], fmt, i);
+   aSinaCosaTan(trig_inputs_float_32[i], trig_inputs_float_64[i], trig_inputs_float[i], fmt, i);
+   SinhCoshTanh(trig_inputs_float_32[i], trig_inputs_float_64[i], trig_inputs_float[i], fmt, i);
+   aSinhaCoshaTanh(trig_inputs_float_32[i], trig_inputs_float_64[i], trig_inputs_float[i], fmt, i);
+  i++;
+}
+
+resultString:=fmt.string();
+
+// Random numbers
+srandom(10);
+int r;
+for(i=0; i<10; i++) r=random();
+
+array[byte] rstate=[95, 8, 121, 45, 89, 20, 53, 189];
+array[byte] nstate=[53, 0, 0, 0, 24, 245, 11, 30];
+state := initstate(10, byteptr(rstate), 8); // return value is undefined
+state2 := setstate(byteptr(rstate));
+
+for (i=0;i<8;i++)
+  if (state[i] != nstate[i])
+    cout `Random state mismatch, $(state[i]) != $(nstate[i])\n`;
+
+// Test single argument functions for segfaults only
+sin(1.0);
+cos(1.0);
+tan(1.0);
+sinh(1.0);
+cosh(1.0);
+tanh(1.0);
+asin(1.0);
+acos(1.0);
+atan(1.0);
+asinh(1.0);
+acosh(1.0);
+atanh(1.0);
+exp(1.0);
+exp2(1.0);
+abs(1.0);
+log(1.0);
+log10(1.0);
+log1p(1.0);
+log2(1.0);
+cbrt(1.0);
+sqrt(1.0);
+erf(1.0);
+erfc(1.0);
+lgamma(1.0);
+tgamma(1.0);
+ceil(1.0);
+floor(1.0);
+nearbyint(1.0);
+rint(1.0);
+round(1.0);
+trunc(1.0);
+expm1(1.0);
+
+cout `ok\n`;

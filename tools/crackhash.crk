@@ -1,0 +1,3 @@
+
+import crack.io cout;
+cout `$('crack meta-data v1.0 pre 1'.makeHashVal())\n`;

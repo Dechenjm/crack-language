@@ -1,0 +1,83 @@
+# Copyright 2010-2011 Google Inc.
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+import crack.io cout, StringFormatter;
+@import test.testann emitOk, incrButZero, testIsChecks, storeScope, getScope,
+    createAnnotations, wrap, user_static, getLocation, stringify, nullTok;
+
+if (@incrButZero 0 != 0)
+    cout `incrButZero 0 failed\n`;
+if (@incrButZero 1 != 2)
+    cout `incrButZero 1 failed\n`;
+
+if (@testIsChecks if != 1)
+    cout `checking 'if' token failed\n`;
+if (@testIsChecks foo != 2)
+    cout `checking identifier token failed\n`;
+
+@storeScope a
+if (@getScope a != 0)
+    cout `module scope failed\n`;
+
+void f() { @storeScope b }
+if (@getScope b != 2)
+    cout `function scope failed\n`;
+
+class A { @storeScope c }
+if (@getScope c != 3)
+    cout `class scope failed\n`;
+
+class B { void x () { @storeScope d } }
+if (@getScope d != 2)
+    cout `method scope failed\n`;
+
+@createAnnotations
+if (!@created)
+    cout `failed to create a new annotation\n`;
+
+if (@createdWithCallback != 100)
+    cout `failed to create an annotation with a callback\n`;
+
+StringFormatter result = {};
+
+@wrap
+void f1() { result `in f`; }
+
+# callbacks should have been removed
+void f2() { result `in g`; }
+
+f1();
+f2();
+
+if (result.string() != '{in f}in g')
+    cout `failed to install or remove callbacks, got: 
+$(result.string())\n`;
+
+class C {
+    @user_static
+    bool works() { return true; }
+}
+
+if (!C.works())
+    cout `"user_static" annotation failed`;
+    
+class D { @static bool works() { return true; } }
+if (!D.works()) cout `"static" annotation failed\n`;
+
+@getLocation blah  # this test will break if you change the line number of blah
+nameEnd := NAME.slice(-25);
+if (nameEnd != 'test/test_annotations.crk' || LINE != 71)
+    cout `failed location check:
+        $nameEnd:$LINE != test/test_annotations.crk:71\n`;
+
+if (@stringify foo != 'foo')
+    cout `stringification (creating a token) failed\n`;
+
+# exercises null tokens (caused a seg-fault)
+@nullTok
+
+@emitOk

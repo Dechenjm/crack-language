@@ -1,0 +1,456 @@
+## Copyright 2011-2012 Google Inc.
+## Copyright 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+##
+##   This Source Code Form is subject to the terms of the Mozilla Public
+##   License, v. 2.0. If a copy of the MPL was not distributed with this
+##   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+##
+## Crack Virtual Filesystem (it's not very virtual yet)
+
+import crack.runtime basename, chdir, closedir, dirname, errno, fileExists,
+    free, fileRemove, getcwd, getDirEntry, malloc, mkdir, open, opendir,
+    readdir, rename, stat, strcpy, strlen, Dir, DirEntry, Stat, EEXIST, O_CREAT,
+    O_TRUNC, O_RDONLY, O_WRONLY, O_APPEND, PATH_MAX, S_IFDIR, S_IFLNK;
+import crack.sys strerror;
+import crack.io cout, FStr, OwningFDReader, OwningFDWriter, Reader, Writer;
+import crack.lang AssertionError, Buffer, CString, Exception,
+    InvalidArgumentError, InvalidStateError, ManagedBuffer, Formatter;
+import crack.lang SystemError;
+import crack.io.readers FullReader;
+@import crack.ann define;
+
+## This gets raised when referencing a path that doesn't exist.
+class NoEntryError : Exception {
+    oper init(String text) : Exception(text) {}
+}
+
+## This gets raise when the process doesn't have the authority to perform the
+## request operation.
+class AccessDeniedError : Exception {
+    oper init(String text) : Exception(text) {}
+}
+
+class Path;
+
+## Iterates over a sequence of Path objects.
+@abstract class PathIter {
+    PathIter iter() { return this; }
+
+    @abstract Path elem();
+    @abstract bool next();
+}
+
+## A path is a node in a virtual filesystem.  It can correspond to a
+## directory, a file, or the root of the filesystem.
+@abstract class Path {
+
+    ## Returns a reader for the path.  The path must be readable.
+    @abstract Reader reader();
+    alias makeReader = reader;
+
+    ## Returns a writer for the path.  The path must be writable.
+    @abstract Writer writer();
+    alias makeWriter = writer;
+
+    ## Make a directory corresponding to the path.
+    ## errorOnExists: throw an error if the directory already exists and is a
+    ##     directory.
+    @abstract void makeDir(bool errorOnExists);
+
+    ## Make a directory corresponding to the path.
+    @final void makeDir() { makeDir(true); }
+
+    FullReader makeFullReader() {
+        return FullReader(reader());
+    }
+
+    String readAll() {
+        src := FullReader(reader());
+        return src.readAll();
+    }
+
+    ## write the entire contents of the file.
+    void writeAll(Buffer data) {
+        writer().write(data);
+    }
+
+    @abstract Path oper [](String child);
+
+    @abstract Path _createNode(String path);
+
+    @abstract Path oper /(String other);
+
+    ## Returns true if the object exists, false if not.
+    @abstract bool exists();
+
+    ## Returns true if the path is a directory (that is, if "children()" can
+    ## be used for iteration)
+    @abstract bool isDir();
+
+    ## Returns true if the path is a symlink.
+    @abstract bool isLink();
+
+    ## Deletes the object at the path.
+    @abstract void delete();
+
+    ## Returns the short (unqualified) name of the Path.  This is the name
+    ## relative to its container.
+    @abstract String getName();
+
+    ## Returns the fully qualified name of the Path.
+    @abstract String getFullName();
+
+    ## Returns the size of the object.
+    @abstract uint64 getSize();
+
+    ## Returns an interator over the children of the path.  (Children may not
+    ## be assumed to be in any particular order)
+    @abstract PathIter children();
+
+    ## returns the parent path.  For a root directory, returns null.
+    @abstract Path parent();
+
+    ## Move the object at the path to 'other'.
+    @abstract void moveTo(Path other);
+
+    ## Move the object at the path into the specified directory and returns
+    ## the new path.
+    Path moveToDir(Path dir) {
+        # Same caveats as in moveTo().
+        newPath := dir/getName();
+        moveTo(newPath);
+        return newPath;
+    }
+
+    ## Make the directory if it doesn't exist, and also make all parent
+    ## directories if they don't exist.
+    void makeDirs() {
+        if (!exists()) {
+            parent().makeDirs();
+            makeDir(false);
+        }
+    }
+
+    ## Delete the entire tree rooted at 'path'.
+    void deleteTree() {
+        for (child :in children())
+            child.deleteTree();
+        delete();
+    }
+}
+
+class RealPathIter : PathIter {
+    Path __container;
+    Dir __dir;
+    DirEntry __entry;
+
+    @final void __close() {
+        if (__dir) {
+            closedir(__dir);
+            __dir = null;
+        }
+    }
+
+    bool _readNext() {
+        if (!__dir)
+            throw InvalidStateError('Iterating past the end of the directory');
+
+        if (!readdir(__dir)) {
+            __close();
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    oper init(Path container) : __container = container,
+        __dir = opendir(CString(container.getFullName()).buffer),
+        __entry = __dir ? getDirEntry(__dir) : null {
+
+        if (__dir)
+            next();
+    }
+
+    oper del() {
+        __close();
+    }
+
+    Path elem() { return __container[StaticString(__entry.name)]; }
+
+    ## Returns true if 'name' is '.' or '..'
+    @static bool __isSpecial(byteptr name) {
+        return name[0] == b'.' &&
+               (name[1] == 0 || name[1] == b'.' && name[2] == 0);
+    }
+
+    bool next() {
+        while (true) {
+            if (!_readNext()) {
+                __close();
+                return false;
+            } else if (__isSpecial(__entry.name)) {
+                continue;
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool isTrue() { return __dir; }
+
+}
+
+## A real filesystem path.  Don't create one of these directly, use makePath()
+## instead.
+class RealPath : Path {
+
+    CString __path;
+
+    oper init(CString realPath) : __path = realPath {}
+
+    void formatTo(Formatter fmt) {
+        fmt.format(__path);
+    }
+
+    Path oper [](String child) {
+        if (child == '..' || child == '.')
+            throw InvalidArgumentError(
+                'Parent directory access not supported'
+            );
+        return RealPath(CString(__path + '/' + child));
+    }
+
+    Path _createNode(String path) {
+        return this[path];
+    }
+
+    Path oper /(String other) {
+        return this[other];
+    }
+
+    bool exists() {
+        return fileExists(__path.buffer);
+    }
+
+    @define __stater(funcName, constName) {
+        bool funcName() {
+            Stat st = {};
+            rc := stat(__path.buffer, st);
+            result := !rc && st.st_mode & constName;
+            free(st);
+            return result;
+        }
+    }
+
+    @__stater(isDir, S_IFDIR)
+    @__stater(isLink, S_IFLNK)
+
+    Reader reader() {
+        fd := open(__path.buffer, O_RDONLY, 0);
+        if (fd == -1)
+            throw SystemError('Opening ' + __path);
+        return OwningFDReader(fd);
+    }
+
+    Writer writer() {
+        fd := open(__path.buffer, O_CREAT | O_WRONLY | O_TRUNC, 0777);
+        if (fd == -1)
+            throw SystemError(FStr() `opening $__path`);
+        return OwningFDWriter(fd);
+    }
+
+    Writer makeAppender() {
+        fd := open(__path.buffer, O_APPEND | O_WRONLY, 0777);
+        if (fd == -1)
+            throw SystemError(FStr() `opening $__path`);
+        return OwningFDWriter(fd);
+    }
+
+    void makeDir(bool errorOnExists) {
+        if (mkdir(__path.buffer, 0o777)) {
+            if (!errorOnExists && errno() == EEXIST && isDir())
+                return;
+            throw SystemError(FStr() `making directory $__path`);
+        }
+    }
+
+    void delete() {
+        if (fileRemove(__path.buffer))
+            throw SystemError(FStr() `Removing $__path`);
+    }
+
+
+    PathIter children() { return RealPathIter(this); }
+    String getFullName() { return __path; }
+    String getName() { return String(basename(__path.buffer)); }
+    uint64 getSize() {
+        Stat st = {};
+        rc := stat(__path.buffer, st);
+        result := uint64(st.st_size);
+        free(st);
+        if (rc)
+            throw SystemError(FStr() `stating $__path`);
+        return result;
+    }
+
+    Path parent() {
+        if (__path == '/') {
+            return null;
+        } else {
+            # allocate a temporary buffer, dirnmae modifies the contents.
+            tempBuf := malloc(__path.size + 1);
+            strcpy(tempBuf, __path.buffer);
+            result := RealPath(CString(dirname(tempBuf), false));
+            free(tempBuf);
+            return result;
+        }
+    }
+
+    void moveTo(Path other) {
+        # This won't work for moving across different types of Path object or
+        # even across different filesystems.
+        otherName := other.getFullName();
+        if (rename(__path.buffer, otherName.buffer))
+            throw SystemError(FStr() `Moving $__path to $otherName`);
+    }
+}
+
+## This is a wrapper class that allows us to define the current directory
+## object.
+class _CWD : Path {
+    Path __path;
+
+    CString __getcwd() {
+        ManagedBuffer buf = {PATH_MAX};
+        if (getcwd(buf.buffer, buf.cap) is null) {
+            err := FStr() `Unable to get current directory: $(strerror())`;
+            throw SystemError(err, errno());
+        }
+
+        return CString(buf, true);
+    }
+
+    oper init() : __path = RealPath(__getcwd())  {}
+
+    ## Sets the current directory to the 'other'.  'other' may be either an
+    ## absolute path or a path relative to the current working directory.  The
+    ## "." and ".." special paths can be used to change the director to the
+    ## current directory and parent directory, respectively.
+    void set(CString other) {
+        if (chdir(other.buffer))
+            throw SystemError(FStr() `Unable to chdir to $other`, errno());
+        __path = RealPath(__getcwd());
+    }
+
+    ## See set(CString).
+    void set(String other) {
+        set(CString(other));
+    }
+
+    ## See set(CString).  This is the same only it uses an existing path.
+    void set(Path other) {
+        set(other.getFullName());
+    }
+
+    Reader reader() { return __path.reader(); }
+    Writer writer() { return __path.writer(); }
+    void makeDir(bool errorOnExists) { __path.makeDir(errorOnExists); }
+    Path oper [](String child) { return __path[child]; }
+    Path _createNode(String path) { return __path._createNode(path); }
+    Path oper /(String other) { return __path/other; }
+    bool exists() { return __path.exists(); }
+    bool isDir() { return __path.isDir(); }
+    bool isLink() { return __path.isLink(); }
+    void delete() { return __path.delete(); }
+    String getName() { return __path.getName(); }
+    String getFullName() { return __path.getFullName(); }
+    uint64 getSize() { return __path.getSize(); }
+    PathIter children() { return __path.children(); }
+    Path parent() { return __path.parent(); }
+    void moveTo(Path other) { return __path.moveTo(other); }
+}
+
+## Contains a path object for the root of the real filesystem.
+const RealPath sysfs = {''};
+
+## A path object that contains the current working directory.
+const _CWD cwd = {};
+
+## See makePath(String)
+Path makePath(CString path) { return RealPath(path); }
+
+## Given an absolute or relative directory in 'path', returns the normalized
+## form of that directory.  Normalization expands all '.' and '..' sequences,
+## and also removes all double slashes.  It appends relative directories to
+## the current working directory.
+##
+## This function makes no attempt to verify that the paths referenced are
+## valid.  Its normalization is purely lexical.
+CString normalize(Buffer path) {
+    ManagedBuffer buf = {PATH_MAX + 1};
+
+    if (path && path[0] != b'/') {
+        if (getcwd(buf.buffer, buf.cap) is null)
+            throw SystemError('unable to getcwd');
+
+        buf.size = strlen(buf.buffer);
+        buf.buffer[buf.size++] = b'/';
+    } else if (path) {
+        buf.buffer[buf.size++] = b'/';
+    }
+
+    # set to true for the start of a path segment
+    bool beginning = true;
+
+    for (uint index = 0; index < path.size; ++index) {
+
+        if (beginning) {
+            # If we got a '..', back up the current buffer until we get to the
+            # last slash.
+            if (index + 1 < path.size &&
+                path[index] == b'.' && path[index + 1] == b'.' &&
+                (index + 2 >= path.size || path[index + 2] == b'/')
+                ) {
+
+                if (buf.size < 2)
+                    throw InvalidArgumentError(
+                        FStr() `Path $path refernces a value below the roor`
+                    );
+                while (buf.size && buf[--buf.size - 1] != b'/');
+                if (!buf.size)
+                    throw AssertionError(
+                        FStr() I`Ran out of path while backing up! org path = \
+                                 $path`
+                    );
+
+            } else if (path[index] == b'.' &&
+                       (index + 1 >= path.size || path[index + 1] == b'/')
+                       ) {
+                # ignore a single dot.
+
+            # Anything else: copy to the new buffer.
+            } else if (path[index] != b'/') {
+                beginning = false;
+                buf.buffer[buf.size++] = path[index];
+            }
+        } else {
+            buf.buffer[buf.size++] = path[index];
+            if (path[index] == b'/')
+                beginning = true;
+        }
+    }
+
+    # don't end with a slash
+    if (beginning)
+        buf.size--;
+
+    buf.buffer[buf.size] = 0;
+
+    return CString(buf, true);
+}
+
+## Create a Path object for the specified string path.
+## If 'path' is not an absolute path, the Path object returned will correspond
+## to a filename relative to the current working directory.
+Path makePath(Buffer path) { return RealPath(normalize(path)); }

@@ -1,0 +1,29 @@
+## Test module for aliases
+## Copyright 2012 Google Inc.
+##
+##   This Source Code Form is subject to the terms of the Mozilla Public
+##   License, v. 2.0. If a copy of the MPL was not distributed with this
+##   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+##
+
+import test.testmod aImportVar, ImpA = A;
+
+alias impVar = aImportVar;
+
+class A[T] {
+    T val;
+    oper init() { val = 123; }
+}
+alias AInt = A[int];
+
+class X {
+    int f() { return 123; }
+}
+int func() { return 456; }
+int gvar = 789;
+alias _private = gvar;
+
+int _privateFunc() { return 1011; }
+alias privateFunc = _privateFunc;
+
+@export_symbols impVar, ImpA, AInt;

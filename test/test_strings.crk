@@ -1,0 +1,291 @@
+# Copyright 2010-2012 Google Inc.
+# Copyright 2010-2011 Shannon Weyrick <weyrick@mozek.us>
+# Copyright 2011 Conrad Steenberg <conrad.steenberg@gmail.com>
+#
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+
+import crack.ascii capitalize, toLower, toUpper, wsplit;
+import crack.cont.array Array;
+import crack.io cout, FStr;
+import crack.lang cmp, die, slice, substr, Buffer, CString, ManagedBuffer,
+    SubString;
+import crack.strutil center, ljust, remove, replace, rjust, split, StringArray;
+
+if ('test' >= 'test string')
+    die('test >= test string');
+
+if ('bad magic' <= 'bad')
+    die('bad magic <= bad');
+
+if ('foo' != 'foo')
+    die('foo != foo');
+
+buf := ManagedBuffer(10);
+buf.move(0, '1234567890');
+s := String(buf, true);
+if (s.size != 10)
+    die('sizeof string created from ManagedBuffer is wrong');
+if (s != '1234567890')
+    die("didn't copy from a ManagedBuffer correctly");
+
+s = String('test of copied substrings', 8, 6);
+if (s != 'copied')
+    die("didn't copy substring correctly.");
+
+s = SubString('test of referenced substring', 8, 10);
+if (s != 'referenced')
+    die('failed to create substring reference.');
+
+s = substr('this is foo', 5, 2);
+if (s != 'is')
+    die('normal substr() failed');
+
+s = substr('this is foo', 5);
+if (s != 'is foo')
+    die('substr() to end failed');
+
+if (slice('this is foo', 5, 7) != 'is')
+    die('normal slice() failed');
+
+if (slice('this is foo', -6, -4) != 'is')
+    die('slice() with negative offsets failed');
+
+if (slice('this is foo', -6) != 'is foo')
+    die('slice() to end failed');
+
+# same tests using the corresponding methods
+
+if ('this is foo'.substr(5, 2)  != 'is' ||
+    'this is foo'.substr(5) != 'is foo' ||
+    'this is foo'.slice(5, 7) != 'is' ||
+    'this is foo'.slice(-6) != 'is foo')
+    die('one of the substr/slice methods failed');
+
+# exercise the overrides in SubString
+ss := 'this is fox'.slice(-3);
+if (ss.substr(1, 1) != 'o' ||
+    ss.substr(1) != 'ox' ||
+    ss.slice(1, -1) != 'o' ||
+    ss.slice(-2) != 'ox')
+    die('one of the SubString substr/slice overrides failed');
+
+cs := CString("test 123");
+if (cs.size != 8)
+    die('failed to create c string');
+if (cs.buffer[cs.size] != 0)
+    die('failed to null terminate');
+
+// string methods
+s = 'one.two.three';
+if (s.rfind(b".") != 7)
+    die('rfind failed');
+if (s.rfind(b"@") != -1)
+    die('rfind nofind failed');
+if (s.lfind(b".") != 3)
+    die('lfind failed');
+if (s.lfind(b"@") != -1)
+    die('lfind nofind failed');
+
+# lfind(String) methods
+if (s.lfind('two') != 4)
+    die('lfind substring offset 0 failed');
+if (s.lfind('o', 1) != 6)
+    die('lfind pos offset failed');
+if (s.lfind('e', -1) != 12)
+    die('lfind neg offset failed');
+if (s.lfind('one', -100) != -1)
+    die('lfind out of bounds offset failed');
+
+# rfind(String) methods
+if (s.rfind('two') != 4)
+    die('rfind substring offset -1 failed');
+if (s.rfind('two', 5) != 4)
+    die('rfind pos offset failed');
+if (s.rfind('one', -12) != 0)
+    die('rfind neg offset failed');
+if (s.rfind('one', -100) != -1)
+    die('rfind out of bounds offset failed');
+if (s.rfind('three', -1) != 8)
+    die('rfind at end failed');
+
+s = "foo\n";
+if (s.rtrim() != "foo")
+    die('rtrim failed');
+
+if ('test\nother\n'.rtrim() != 'test\nother')
+    die('rtrim of string with embedded newline failed');
+
+if (''.rtrim() != '')
+    cout `FAILED ''.rtrim()\n`;
+
+if (' \n\t\r'.rtrim() != '')
+    cout `FAILED all_whitespace.rtrim()\n`;
+
+s = 'test\'\0\223';
+if (s.getRepr() != "'test\\047\\000\\223'")
+    cout `bad value for s.getRepr(): $(s.getRepr())\n`;
+
+if (FStr() `awesome` != 'awesome')
+    cout `FAILED FStr formatting\n`;
+
+if (1) {
+    FStr temp = {};
+    if (temp `first` != 'first')
+        cout `FAILED simple local FStr variable\n`;
+    if (temp `second` != 'second')
+        cout `FAILED reuse of local FStr variable\n`;
+}
+
+if (1) {
+    if (cmp('', ''))
+        cout `FAILED identical null string comparison\n`;
+}
+
+if (1) {
+    if (wsplit('') != StringArray![''])
+        cout `FAILED ws-splitting empty string\n`;
+
+    if (wsplit('bogus') != StringArray!['bogus'])
+        cout `FAILED ws-splitting single element string`;
+
+    if (wsplit('  this\tis\r\na test ') !=
+        StringArray!['', 'this', 'is', 'a', 'test', '']
+        )
+        cout `FAILED ws-splitting string with whitespace ends\n`;
+
+    if (split('amount|reason', b'|') != StringArray!['amount','reason'])
+        cout `FAILED ws-splitting string with non-whitespace\n`;
+}
+
+# String padding function tests
+s = "foo";
+newS := ljust(s, 5);
+if (newS != "foo  ")
+    cout `FAILED ljust string\n`;
+
+newS = rjust(s, 5);
+if (newS != "  foo")
+    cout `FAILED rjust string\n`;
+
+newS = center(s, 6);
+if (newS != " foo  ")
+    cout `FAILED center string\n`;
+
+# Primitive array from StringArray
+three := String("thr");
+sa := StringArray!["one"/*static*/,CString("two"),three];
+if (sa[0].buffer[3] != 0)
+    cout `FAILED null char check 1\n`;
+if (sa[1].buffer[3] != 0)
+    cout `FAILED null char check 2\n`;
+pa := sa.makePrimArray();
+for (i:=0; i < sa.count(); ++i) {
+    if (pa[i][3] != 0)
+        cout `FAILED null char check $i,3\n`;
+}
+
+// concatenation
+f := "foo";
+b := "bar";
+fb := f+b;
+if (fb != "foobar")
+    cout `FAILED string concat\n`;
+fc := "foo" + b"0";
+if (fc != "foo0")
+    cout `FAILED string byte concat\n`;
+
+// Test multiply operator
+line := "-"*10;
+if (line != "----------")
+    cout `Failed multiply of length 1 string\n`;
+line2 := "hello"*2;
+if (line2 != "hellohello")
+    cout `Failed multiply of length > 1 string\n`;
+
+// Test replace
+line3 := replace(line2, b'h', b'H');
+if (line3 != "HelloHello")
+    cout `Failed to replace characters in string\n`;
+
+line3 = replace(line2, Array[byte]![b'h', b'e', b'l', b'o'], Array[byte]![b'H', b'E', b'L', b'O']);
+if (line3 != "HELLOHELLO")
+    cout `Failed to replace characters in string\n`;
+
+// Test remove
+line3 = remove(line2, b'h');
+if (line3 != "elloello")
+    cout `Failed to remove characters from string, got '$line3'\n`;
+
+line3 = toUpper(line2);
+if (line3 != "HELLOHELLO")
+    cout `Failed to convert string to uppercase\n`;
+
+line3 = toLower(line3);
+if (line3 != "hellohello")
+    cout `Failed to convert string to lowercase\n`;
+
+#' startsWith, endsWith tests
+
+if (!'test'.startsWith('te'))
+    cout `Failed 'test'.startsWith('te')\n`;
+
+if (!'test'.startsWith('test'))
+    cout `Failed 'test'.startsWith('test')\n`;
+
+if ('test'.startsWith('test\0'))
+    cout `Failed 'test'.startsWith('test\\0')\n`;
+
+if ('test'.startsWith('foo'))
+    cout `Failed 'test'.startsWith('foo')\n`;
+
+if (!'test'.endsWith('st'))
+    cout `Failed 'test'.endsWith('st')\n`;
+
+if (!'test'.endsWith('test'))
+    cout `Failed 'test'.endsWith('test')\n`;
+
+if (1) {
+    Buffer b = {'xtest'.buffer + 1, 4};
+    if ('test'.endsWith('xtest'))
+        cout `Failed b.endsWith('xtest')\n`;
+}
+
+if ('test'.endsWith('foo'))
+    cout `Failed 'test'.endsWith('foo')\n`;
+
+if ('foo=bar'.getSuffix('foo=') != 'bar')
+    cout `Failed 'foo=bar'.getSuffix('foo=') != 'bar'\n`;
+
+if ('foo='.getSuffix('foo=') != '')
+    cout `Failed 'foo='.getSuffix('foo=') != ''\n`;
+
+if (!('foo='.getSuffix('bar=') is null))
+    cout `Failed !('foo='.getSuffix('bar=') is null)\n`;
+
+String words = "this is a heading";
+capWords := capitalize(words);
+if (capWords != "This Is A Heading")
+    cout `Failed to capitalize string, got '$capWords'\n`;
+
+capWords = capitalize(words, 1);
+if (capWords != "This is a heading")
+    cout `Failed to capitalize first word in string, got $capWords\n`;
+
+if (true) {
+    # Construct a string from two StaticStrings.
+    String s = 'foobar'.substr(0, 3);
+
+    cs := s.toCString();
+    if (cs != s)
+        cout `Failed conversion of "foo" to CString\n`;
+
+    if (!('foo'.toCString().isa(StaticString)))
+        cout `Failed empty conversion of StaticString to CString\n`;
+}
+
+
+cout `ok\n`;
+

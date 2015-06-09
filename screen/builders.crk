@@ -1,0 +1,392 @@
+// Builder definitions for screen
+// Copyright 2011-2012 Google Inc.
+// Copyright 2011-2012 Shannon Weyrick <weyrick@mozek.us>
+// Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+
+import crack.ascii wsplit;
+import crack.io Writer, StringWriter, StringFormatter, FStr, cerr;
+import crack.exp.dir Directory;
+import crack.exp.file File, FileInfo;
+import crack.net Poller;
+import crack.process Process, ProcessHandlerImpl, CRK_PIPE_STDIN, 
+    CRK_PIPE_STDOUT, CRK_PIPE_STDERR;
+import crack.cont.treemap TreeMap;
+import crack.cont.array Array;
+import crack.lang AppendBuffer, AssertionError, Buffer, SubString;
+import crack.regex Regex, PCRE_MULTILINE;
+
+import config config, T_INIT, T_CRACK, T_BINARY, T_FINISHED;
+import testdata TestData;
+
+///////////////////////////
+
+class Result {
+    bool pass;
+    String expected = {}, actual = {};
+
+    oper init(bool t): pass = t { }
+    oper init(String e, String a): pass = false, expected = e, actual = a { 
+        
+    }
+}
+
+class BuilderTestHarness;
+
+// one per builder that exists in crack
+// specific builders are defined below BuilderTestHarness
+class CrackBuilderDef {
+    BuilderTestHarness newTestHarness(TestData d) {
+        throw AssertionError("virtual");
+    }
+    bool separateBinary() { throw AssertionError("virtual"); }
+    String getName() { throw AssertionError("virtual"); }
+    String getNick() { throw AssertionError("virtual"); }
+    String getCrackOptions(BuilderTestHarness h) { return ""; }
+    String getBinaryOptions(BuilderTestHarness h) { return ""; }
+}
+
+class TestHandler : ProcessHandlerImpl {
+    AppendBuffer out = {1024}, err = {1024};
+    bool terminated;
+    
+    void onOutData(Buffer data) {
+        out.extend(data);
+    }
+    
+    void onErrData(Buffer data) {
+        err.extend(data);
+    }
+    
+    void onTerminate(int rc) {
+        terminated = true;
+    }
+    
+    String getStdOut() {
+        result := String(out, true);
+        out = AppendBuffer(1024);
+        return result;
+    }
+    
+    String getStdErr() {
+        result := String(err, true);
+        err = AppendBuffer(1024);
+        return result;
+    }    
+}
+
+// execute crack process for specific builder for specific test
+// get output, compare results, decide pass/fail
+// diff failed output
+// maintain state so we don't have on crack processes
+// maintain final PASS/FAIL output for this builder/test
+class BuilderTestHarness {
+
+    Result crackResult;
+    Result binaryResult;
+
+    StringWriter output = { }; // test results
+    StringWriter vOutput = { }; // verbose
+
+    int _status = T_INIT;
+    CrackBuilderDef _bDef;
+    TestData _data;
+    Process _proc;
+    String _testBinary;
+    bool _runBinary = true;
+    TestHandler processHandler = {};
+
+    oper init(CrackBuilderDef d, TestData data) : _bDef = d,
+                                                  _data = data {
+    }
+
+
+    String _colorMsg(String c, String msg) {
+        return FStr() `\033[$(c);1m$(msg)\033[0m`;
+    }
+    void _pass() {
+        output.write(_colorMsg("32", "PASS "));
+    }
+    void _fail() {
+        output.write(_colorMsg("31", "FAIL "));
+    }
+
+    Result compareOutput(String expected, String actual) {
+
+        // note that we ignore trailing newspace on expected and actual
+        if (expected.rtrim() == actual.rtrim()) {
+            _pass();
+            return Result(true);
+        }
+        else {
+            _fail();
+            return Result(expected, actual);
+        }
+
+    }
+
+    Result compareOutputRegex(String expectedRegex, String actual) {
+
+        rx := Regex(expectedRegex.rtrim(), PCRE_MULTILINE);
+        m := rx.match(actual.rtrim());
+
+        if (m is null) {
+            _fail();
+            return Result(expectedRegex, actual);
+        }
+
+        _pass();
+        return Result(true);
+    }
+
+    void runBinary(Poller poller) {
+        //cerr `running binary, got $(processHandler.getStdOut())\n`;
+
+        String args = {};
+
+        if (_data.sections.hasKey("ARGS"))
+            args = _data.sections["ARGS"].rtrim();
+
+        output.write(_bDef.getNick());
+        output.write(" Run: ");
+
+        // native: run binary to get final results for comparison
+        bfi := FileInfo(_testBinary);
+        if (!bfi.exists()) {
+            // shouldn't happen since we don't run binary if compile failed...
+            _fail();
+            vOutput.write("binary wasn't created, check compile output");
+            binaryResult = Result(false);
+            _status = T_FINISHED;
+            return;
+        }
+
+        cmd := _testBinary;
+        if (!args.isEmpty())
+            cmd = cmd + " " + args;
+
+        if (config.verbose) {
+            vOutput.write(cmd);
+            vOutput.write("\n");
+        }
+        _status = T_BINARY;
+        processHandler.terminated = false;
+        gotStdIn := _data.sections.hasKey("STDIN");
+        _proc = Process(wsplit(cmd), 
+                        CRK_PIPE_STDOUT | CRK_PIPE_STDERR | 
+                         (gotStdIn ? CRK_PIPE_STDIN : 0)
+                        );
+        _proc.addTo(poller, processHandler);
+
+        if (gotStdIn) {
+            _proc.putStdIn(_data.sections["STDIN"]);
+        }
+    }
+
+    void finishBinary() {
+
+        if (_proc.failed()) {
+            _fail();
+            crackResult = Result(false);
+            output.write("binary failed to run\n");
+        } else {
+            nativeOut := processHandler.getStdOut();
+            nativeErr := processHandler.getStdErr();
+
+            // XXX right now, out stdout and stderr are merged. this will change when we
+            // have an explicit stderr section
+            if (nativeErr.size > 0)
+                nativeOut = nativeOut + nativeErr;
+
+            expect := _data.sections.get("EXPECT");
+            if (expect is null) {
+                expect = _data.sections["REXPECT"];
+                binaryResult = compareOutputRegex(expect, nativeOut);
+            } else {
+                binaryResult = compareOutput(expect, nativeOut);
+            }
+        }
+
+        _proc.close();
+
+
+    }
+
+    void run(Poller poller) {
+
+        if (_bDef.separateBinary()) {
+            _testBinary = (config.outDir/_data.fInfo.getName()).getFullName();
+        }
+
+        StringWriter opts = {};
+
+        // options for crack
+        if (_data.sections.hasKey("OPTS"))
+            opts.write(_data.sections["OPTS"].rtrim());
+
+        opts.write(_bDef.getCrackOptions(this));
+        if (config.libPath) {
+            opts.write(" -l ");
+            opts.write(config.libPath);
+        }
+
+        cmd := FStr() I`$(config.crackBin) -B $(_bDef.getName()) \
+                        $(opts.string()) $(_data.scriptName)`;
+
+        // args for script
+
+        if (_data.sections.hasKey("ARGS") && !_bDef.separateBinary()) {
+            args := _data.sections["ARGS"].rtrim();
+            if (!args.isEmpty())
+                cmd = cmd + " " + args;
+        }
+
+        if (config.verbose) {
+            vOutput.write(FStr() `$cmd\n`);
+        }
+
+        output.write(_bDef.getNick());
+        output.write(": ");
+
+        _status = T_CRACK;
+        gotStdIn := !_bDef.separateBinary() && _data.sections.hasKey("STDIN");
+        _proc = Process(wsplit(cmd), 
+                        CRK_PIPE_STDOUT | CRK_PIPE_STDERR | 
+                         (gotStdIn ? CRK_PIPE_STDIN : 0)
+                        );
+        _proc.addTo(poller, processHandler);
+        if (gotStdIn)
+            _proc.putStdIn(_data.sections["STDIN"]);
+
+    }
+
+     void finishCrack() {
+        bool isRegex = false;
+
+        compileOut := processHandler.getStdOut();
+        compileErr := processHandler.getStdErr();
+        _proc.close();
+
+        vOutput.write(FStr() I`code: [$(_proc.getReturnCode())], 
+                               out: [$compileOut], err [$compileErr]\n`);
+
+        // XXX right now, out stdout and stderr are merged. this will change 
+        // when we have an explicit stderr section
+        if (compileErr.size > 0)
+            compileOut = compileOut + compileErr;
+
+        expect := _data.sections.get("EXPECT");
+        if (expect is null){
+            expect =_data.sections["REXPECT"];
+            isRegex = true;
+        }
+
+        if (_bDef.separateBinary()) {
+            // if we have a separate binary, this is the AOT compile phase
+            if (_proc.getReturnCode() != 0 || // parse failure
+                !compileErr.isEmpty() // warning
+               ) {
+
+                // XXX this will break when we have a test that checks for a warning
+                // _and_ output from the binary. the real fix is a separate section
+                // for stderr output
+
+                // if it failed, we'll compare expect output, because it may be
+                // a test for parse failure
+                if (isRegex)
+                    crackResult = compareOutputRegex(expect, compileErr);
+                else
+                    crackResult = compareOutput(expect, compileErr);
+                // if it was a failure, we don't run the binary
+                _runBinary = false;
+            }
+            else {
+                // good aot compile
+                _pass();
+                crackResult = Result(true);
+            }
+        }
+        else {
+            // compare jit result
+            if (isRegex)
+                crackResult = compareOutputRegex(expect, compileOut);
+            else
+                crackResult = compareOutput(expect, compileOut);
+        }
+
+    }
+
+    int tick(Poller poller) {
+
+        if (_status == T_FINISHED)
+            return _status;
+
+        if (!processHandler.terminated)
+            return _status;
+
+        // we're in state CRACK or BINARY, and our process is done
+        if (_status == T_CRACK) {
+            finishCrack();
+            // if we have a separate binary, launch it
+            if (_bDef.separateBinary() && _runBinary && crackResult.pass)
+                runBinary(poller);
+            else
+                _status = T_FINISHED;
+        } else if (_status == T_BINARY) {
+            finishBinary();
+            _status = T_FINISHED;
+        }
+
+        if (_status == T_FINISHED && vOutput.size)
+            vOutput.write("\n");
+
+        return _status;
+    }
+
+}
+
+class JitTestHarness : BuilderTestHarness {
+
+    oper init(CrackBuilderDef d, TestData data): BuilderTestHarness(d, data) { }
+
+}
+
+class NativeTestHarness : BuilderTestHarness {
+
+    oper init(CrackBuilderDef d, TestData data): BuilderTestHarness(d, data) { }
+
+}
+
+//////////////////////////////
+
+class JitBuilderDef : CrackBuilderDef {
+    BuilderTestHarness newTestHarness(TestData d) {
+        return JitTestHarness(this, d);
+    }
+    bool separateBinary() { return false; }
+    String getName() { return "llvm-jit"; }
+    String getNick() { return "JIT"; }
+}
+
+class NativeBuilderDef : CrackBuilderDef {
+    BuilderTestHarness newTestHarness(TestData d) {
+        return NativeTestHarness(this, d);
+    }
+    bool separateBinary() { return true; }
+    String getName() { return "llvm-native"; }
+    String getNick() { return "AOT"; }
+    String getCrackOptions(BuilderTestHarness h) {
+        return " -b out="+h._testBinary;
+    }
+}
+
+// These are the list of builders we support in the test suite.
+// The keys to this hash are used to specify which builders to run
+// from the command line
+TreeMap[String, CrackBuilderDef] builderDefList = { };
+builderDefList["jit"] = JitBuilderDef();
+builderDefList["native"] = NativeBuilderDef();

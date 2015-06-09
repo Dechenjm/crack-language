@@ -1,0 +1,84 @@
+// Copyright 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+# Test the logger module
+import crack.logger Logger, DEBUG, FATAL, ERROR, INFO, error, LogFormatter,
+                    setLogLevel, setLogFile, setLogWriter, setLogFormatter;
+import crack.io cout, StringFormatter;
+import crack.cont.array Array;
+import crack.exp.file File;
+fmt := StringFormatter();
+
+l := Logger(fmt, DEBUG);
+l.log(DEBUG, "This is a debug string");
+l.debug("This is a debug string2");
+l.info("This is an info string");
+l.warn("This is a warning");
+l.error("This is an error");
+l.fatal("This is a fatal error");
+
+fmt = StringFormatter();
+l = Logger(fmt, FATAL, Array[String]!["datetime", "severity", "progname", "escapemsg"]);
+l.log(DEBUG, "This is a debug string");
+l.debug("This is a debug string2");
+l.info("This is an info string");
+l.warn("This is a warning");
+l.error("This is an error");
+
+if (fmt.string().size > 0)
+  cout `Log level error\n`;
+
+l.fatal("This is a fatal error");
+if (fmt.string().size == 0)
+  cout `Log message erroneously filtered\n`;
+
+fmt = StringFormatter();
+l = Logger(fmt, FATAL, " datetime  severity progname escapemsg ");
+l.log(FATAL, "This is a fatal error");
+
+# Test formatter protocol
+uint t1 = 10;
+
+fmt = StringFormatter();
+debugLogger := Logger(fmt, DEBUG);
+lf := LogFormatter(debugLogger, DEBUG);
+
+lf `Test $t1 with $("two") variables`;
+lf.setLoggerLevel(ERROR);  // Sets the log level of the logger
+lf.setLevel(INFO); // Sets the log level of the formatter
+lf `This INFO string will not be logged, because the logger's severity level allows only ERROR and FATAL log messages`;
+
+lf.setLoggerLevel(DEBUG);  // Sets the log level of the logger
+lf.setFile("/dev/null");
+lf `Log to /dev/null`;
+
+lf.setFile(File("/dev/null","w"));
+lf `Log to /dev/null again`;
+
+lf.setFile(File("/dev/null","a"));
+lf `Log to /dev/null again in append mode`;
+
+lf.setWriter(File("/dev/null","w"));
+lf `Log to /dev/null as a writer`;
+
+lf.setLogger(l);
+lf `Log to StringFormatter as a writer`;
+
+# Test these methods for the default logger objects
+setLogLevel(DEBUG);  // Sets the log level of the logger
+setLogFile("/dev/null");
+error `Log to /dev/null`;
+
+setLogFile(File("/dev/null","w"));
+error `Log to /dev/null again`;
+
+setLogWriter(File("/dev/null","w"));
+error `Log to /dev/null as a writer`;
+
+setLogFormatter(fmt);
+error `Log to StringFormatter as a writer`;
+
+cout `ok\n`;

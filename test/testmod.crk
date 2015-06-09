@@ -1,0 +1,33 @@
+# test module
+# this is for execution with bootstrapping disabled (byteptr's are expected 
+# rather than Strings)
+# Copyright 2010-2011 Google Inc.
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+puts('testmod');
+
+class TestmodMarker { oper release() { puts('cleanup testmod'); } }
+TestmodMarker marker;
+
+# a function to import
+void func() {
+    puts('in test func');
+}
+
+# a class to import
+class A {
+    byteptr data;
+
+    oper init(byteptr data) : data = data {}
+    
+    void dump() {
+        puts(data);
+    }
+};
+
+# a variable for us to import
+A aImportVar = A('imported var');

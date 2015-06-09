@@ -1,0 +1,83 @@
+# Copyright 2011-2012 Google Inc.
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# tests of string interpolation
+
+# verify that a formatter is released exactly once.
+if (1) {
+    int releaseCount;
+    class A {
+        void format(byteptr val) {}
+        void format(int i) {}
+        oper release() { ++releaseCount; }
+        oper to bool() { return 1; }
+    }
+    
+    int i;
+    A() `first test $i, second test $i\n`;
+    if (releaseCount != 1) {
+        puts('FAILED istring formatter release count != 1:');
+        printint(releaseCount);
+    }
+}
+
+# verify that the troublesome `$i'` isn't interpreted as the beginning of an 
+# augmented string token
+if (1) {
+    import test.preutil streq;
+    class F {
+        int intVal;
+        byteptr bptrVal;
+        void format(byteptr text) {
+            bptrVal = text;
+        }
+        void format(int i) {
+            intVal = i;
+        }
+        bool check(int i, byteptr text) {
+            return intVal == i && streq(bptrVal, text);
+        }
+        oper to bool() { return 1; }
+    }
+    f := F();
+    int i = 100, b = 200, r = 300, I = 400;
+    f `$i"`;
+    if (!f.check(100, '"'))
+        puts('FAILED i" in istring');
+    f `$b"`;
+    if (!f.check(200, '"'))
+        puts('FAILED b" in istring');
+    f `$r"`;
+    if (!f.check(300, '"'))
+        puts('FAILED r" in istring');
+    f `$I"`;
+    if (!f.check(400, '"'))
+        puts('FAILED I" in istring');
+    
+    f `$(r'\test')$(i)`;
+    if (!f.check(100, '\\test'))
+        puts('FAILED augmented string in parens');
+}
+
+if (1) {
+    class F {
+        int result;
+        void format(int i) {
+            result <<= 4;
+            result |= i;
+        }
+        
+        int leave() {
+            return result;
+        }
+        
+        oper to bool() { return 1 }
+    }
+    if (F() `$(1)$(F() `$(2)`)$(3)` != 0x123)
+        puts('FAILED nested istrings');
+}
+
+puts('ok');

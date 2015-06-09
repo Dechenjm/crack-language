@@ -1,0 +1,469 @@
+# Copyright 2010-2012 Google Inc.
+# Copyright 2010,2012 Shannon Weyrick <weyrick@mozek.us>
+# Copyright 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+#
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# Basic input/output classes.
+
+import crack.lang die, AppendBuffer, Buffer, CString, WriteBuffer,
+    ManagedBuffer, Writer, Exception, Formatter;
+import crack.runtime close, float_str, strlen, write, malloc, memcpy, free,
+    read, c_strerror, setNonBlocking, errno, EAGAIN, EWOULDBLOCK;
+
+# we need Writer and Formatter to be in crack.lang, but they belongs here.
+@export_symbols Writer, Formatter;
+
+## Wraps a file handle and provides methods common to all file handles.
+class FileHandle : Object {
+    int fd;
+
+    oper init(int fd) : fd = fd {}
+
+    ## Close the file descriptor.
+    void close() {
+        if (fd != -1) {
+          close(fd);
+          fd = -1;
+        }
+    }
+
+    ## Set the file handle's non blocking status
+    int setNonBlocking(bool val) {
+        return setNonBlocking(fd, val);
+    }
+
+    void formatTo(Formatter fmt){
+        fmt `FileHandle($fd)`;
+    }
+
+}
+
+## Writer for a file descriptor.
+## Unless you are managing the file descriptor elsewhere, you probably want
+## to use OwningFDWriter instead.
+class FDWriter : FileHandle, Writer {
+
+    ## Constructs an FDWriter from a plain file descriptor.
+    oper init(int fd) : FileHandle(fd) {}
+
+    void write(Buffer buf) {
+        write(fd, buf.buffer, buf.size);
+    }
+
+    void write(byteptr cstr){
+        write(fd, cstr, strlen(cstr));
+    }
+
+    Object oper from Writer() { return this; }
+};
+
+## Writer for a file descriptor that closes the file descriptor upon
+## destruction.
+class OwningFDWriter : FDWriter {
+
+    oper init(int fd) : FDWriter(fd) {}
+    oper del() { if (fd != -1) close(); }
+}
+
+## Interface for all readers.  Readers support two flavors of read()
+## methods that allow you to read bytes from a stream.
+@abstract class Reader : VTableBase {
+
+    ## Reads enough bytes to fill the buffer, or as many bytes as are
+    ## available from the source.  Returns the number of bytes read and sets
+    ## the buffer size to the number of bytes read.
+    @abstract uint read(WriteBuffer buffer);
+
+    String read(uint size) {
+        b := ManagedBuffer(size);
+        s := read(b);
+
+        # if the amount read is most of the buffer, just take ownership of the
+        # buffer.
+        if (s >= size * 3 / 4)
+            return String(b, true);
+        else
+            # otherwise copy.
+            return String(b);
+    }
+
+    # Since we can't load crack.ann yet, add the interface plumbing manually
+    @abstract Object oper from Reader();
+    oper bind() { if (!(this is null)) this.oper from Reader().oper bind(); }
+    oper release() {
+        if (!(this is null)) this.oper from Reader().oper release();
+    }
+};
+
+## Reader to read from a file descriptor.
+## Unless you are managing the file descriptor elsewhere, you probably want to
+## use OwningFDReader instead.
+class FDReader : FileHandle, Reader {
+
+    oper init(int fd) : FileHandle(fd) {}
+
+    ## Read up to 'size' bytes from the file descriptor into the buffer.
+    uint read(WriteBuffer buf) {
+        int rc = read(fd, buf.buffer, buf.cap);
+        if (rc == -1) {
+            int en = errno();
+            // don't throw if this is a blocking issue (fd may be nonblocking)
+            if (en != EAGAIN && en != EWOULDBLOCK)
+                throw Exception(String(c_strerror()));
+            rc = 0;
+        }
+        buf.size = rc;
+        return rc;
+    }
+
+    Object oper from Reader() { return this; }
+};
+
+## Reader for a file descriptor that closes the file descriptor upon
+## destruction.
+class OwningFDReader : FDReader {
+
+    oper init(int fd) : FDReader(fd) {}
+    oper del() { if (fd != -1) close(); }
+}
+
+## Format val into buf.  The number will be formatted into the _end_ of the
+## buffer.
+## Returns the start index of the number.
+uint _format(uint64 val,  ## value to format
+             byteptr buf, ## buffer to format into.  This must be large enough
+                          ## to hold the string representation of the number.
+             uint size    ## size of the buffer
+             ) {
+    uint i = size;
+
+    # zero is special
+    if (!val) {
+        i = i - 1;
+        buf[i] = 48;
+        return i;
+    }
+
+    uint64 v = val;
+    while (v) {
+        i = i - 1;
+        digit := byte(v % 10);
+        v = v / 10;
+        buf[i] = b'0' + digit;
+    }
+    return i;
+}
+
+## Format an integer into the buffer.  "buf" must be at least 21 characters.
+## Returns the index to the beginning of the number.
+uint _format(int64 val, byteptr buf, uint size) {
+    uint i;
+    if (val < 0) {
+        # negate the value, format the absolute value then add the sign to the
+        # beginning
+        raw := uint64(-val);
+        i = _format(raw, buf, size) - 1;
+        buf[i] = b'-';
+    } else {
+        raw := uint64(val);
+        i = _format(raw, buf, size);
+    }
+    return i;
+}
+
+## Format a pointer into the buffer. "buf" must be at least 18 characters.
+## Returns the index to the beginnung of the hex number.
+uint _format(voidptr ptr, byteptr buf, uint size) {
+    val := uintz(ptr);
+    uint i = size;
+
+    if (!val) {
+        i = i - 1;
+        buf[i] = b'0';
+    } else {
+        while (val) {
+            i = i - 1;
+            b := byte(val % 16);
+            if (b < 10)
+                b += b'0';
+            else
+                b += b'a' - byte(10);
+            buf[i] = b;
+            val = val / 16;
+        }
+    }
+
+    i = i - 1;
+    buf[i] = b'x';
+    i = i - 1;
+    buf[i] = b'0';
+
+    return i;
+}
+
+## StandardFormatter class - got a format() method for anything.
+class StandardFormatter : Formatter {
+
+    Writer rep;
+
+    oper init(Writer rep) : rep = rep {}
+
+    void write(byteptr data) {
+        rep.write(Buffer(data, strlen(data)));
+    }
+
+    void write(Buffer data) {
+        rep.write(data);
+    }
+
+    void format(StaticString data) {
+        write(data);
+    }
+
+    void format(int16 val) {
+        buffer := ManagedBuffer(6);
+
+        # have to convert so it will match the later _format method.
+        int64 v = val;
+        start := _format(v, buffer.buffer, buffer.cap);
+        write(Buffer(buffer.buffer + start, buffer.cap - start));
+    }
+
+    void format(uint16 val) {
+        buffer := ManagedBuffer(5);
+
+        # _format(uint32) comes first so we don't have to type convert
+        start := _format(val, buffer.buffer, buffer.cap);
+        write(Buffer(buffer.buffer + start, buffer.cap - start));
+    }
+
+    void format(int32 val) {
+        buffer := ManagedBuffer(11);
+
+        # have to convert so it will match the later _format method.
+        int64 v = val;
+        start := _format(v, buffer.buffer, buffer.cap);
+        write(Buffer(buffer.buffer + start, buffer.cap - start));
+    }
+
+    void format(uint32 val) {
+        buffer := ManagedBuffer(10);
+
+        # _format(uint32) comes first so we don't have to type convert
+        start := _format(val, buffer.buffer, buffer.cap);
+        write(Buffer(buffer.buffer + start, buffer.cap - start));
+    }
+
+    void format(int64 val) {
+        buffer := ManagedBuffer(21);
+        start := _format(val, buffer.buffer, buffer.cap);
+        write(Buffer(buffer.buffer + start, buffer.cap - start));
+    }
+
+    void format(uint64 val) {
+        buffer := ManagedBuffer(20);
+        start := _format(val, buffer.buffer, buffer.cap);
+        write(Buffer(buffer.buffer + start, buffer.cap - start));
+    }
+
+    # this temporarily uses a runtime call, until we implement a float
+    # printer in crack
+    void format(float32 val) {
+        buffer := ManagedBuffer(80);
+        buffer.size = float_str(val, buffer.buffer, buffer.cap);
+        write(buffer);
+    }
+
+    # this temporarily uses a runtime call, until we implement a float
+    # printer in crack
+    void format(float64 val) {
+        buffer := ManagedBuffer(80);
+        buffer.size = float_str(val, buffer.buffer, buffer.cap);
+        write(buffer);
+    }
+
+    void format(bool val) {
+        if (val)
+            write('true');
+        else
+            write('false');
+    }
+
+    ## For general objects, format() just calls the object's formatTo()
+    ## method.
+    void format(Object obj) {
+        if (obj is null) {
+            write('null');
+        } else {
+            obj.formatTo(this);
+        }
+    }
+
+    ## So we can deal with plain null-terminated strings.
+    void format(byteptr cstr) {
+        write(Buffer(cstr, strlen(cstr)));
+    }
+
+    void format(voidptr ptr) {
+        buffer := ManagedBuffer(18);
+        start := _format(ptr, buffer.buffer, buffer.cap);
+        write(Buffer(buffer.buffer + start, buffer.cap - start));
+    }
+
+    Object oper from Writer() { return this; }
+    Object oper from Formatter() { return this; }
+}
+
+cout := StandardFormatter(FDWriter(1));
+cerr := StandardFormatter(FDWriter(2));
+cin := FDReader(0);
+
+## Allows you to construct a string by writing to it.
+class StringWriter : AppendBuffer, Writer {
+
+    oper init(uint initBufSize) : AppendBuffer(initBufSize) {}
+    oper init() : AppendBuffer(1024) {}
+
+    void write(Buffer data) {
+        extend(data);
+    }
+
+    void write(byteptr cstr){
+        extend(cstr, strlen(cstr));
+    }
+
+    ## Return a string containing everything that has been written so far.
+    ## Deprecated.  Use makeString() or string() instead.
+    String createString() {
+        return String(buffer, size, false);
+    }
+
+    ## Return a string containing everything that has been written so far.
+    String makeString() {
+        return String(buffer, size, false);
+    }
+
+    ## Return a string containing everything that has been written so far.
+    String string() {
+        return String(buffer, size, false);
+    }
+
+    ## Return a null terminated string containing everything that has been
+    ## written so far.
+    ## Deprecated.  Use makeCString() or cString() instead.
+    CString createCString() {
+        append(0);
+        return CString(buffer, size - 1, false);
+    }
+
+    ## Return a null terminated string containing everything that has been
+    ## written so far.
+    CString makeCString() {
+        append(0);
+        return CString(buffer, size - 1, false);
+    }
+
+    ## Return a null terminated string containing everything that has been
+    ## written so far.
+    CString cString() {
+        append(0);
+        return CString(buffer, size - 1, false);
+    }
+
+    Object oper from Writer() { return this; }
+};
+
+## Lets you wrap an AppendBuffer with a Writer interface.
+class AppendBufferWriter : Object, Writer {
+
+    AppendBuffer buffer;
+
+    oper init(AppendBuffer buffer) : buffer = buffer {}
+
+    void write(Buffer data) {
+        buffer.extend(data);
+    }
+
+    Object oper from Writer() { return this; }
+}
+
+
+## Allows you to read from a string.
+class StringReader : Object, Reader {
+
+    uint __pos;
+    String __src;
+
+    oper init(String src) : __src = src {}
+
+    uint read(WriteBuffer buf) {
+        if (__pos >= __src.size) {
+            buf.size = 0;
+            return 0;
+        }
+
+        count :=
+            (__pos + buf.cap > __src.size) ? __src.size - __pos : buf.cap;
+        buf.move(0, __src.buffer + __pos, count);
+        __pos += count;
+        buf.size = count;
+        return count;
+    }
+
+    Object oper from Reader() { return this; }
+}
+
+## Convenience wrapper, equivalent to StandardFormatter(StringWriter())
+class StringFormatter : StandardFormatter {
+
+    StringWriter _writer = {};
+
+    oper init(uint initBufSize) : StandardFormatter(null), _writer(initBufSize) {
+        rep = _writer;
+    }
+
+    oper init() : StandardFormatter(null) { rep = _writer; }
+
+    ## see: StringWriter.createString()
+    ## Deprecated.  Use makeString() or string() instead.
+    String createString() { return _writer.createString(); }
+
+    ## see: StringWriter.makeString()
+    String makeString() { return _writer.makeString(); }
+
+    ## see: StringWriter.string()
+    String string() { return _writer.string(); }
+
+    ## see: StringWriter.createCString()
+    ## Deprecated.  Use makeCString() or cString() instead.
+    String createCString() { return _writer.createCString(); }
+
+    ## see: StringWriter.makeCString()
+    String makeCString() { return _writer.makeCString(); }
+
+    ## see: StringWriter.cString()
+    String cString() { return _writer.cString(); }
+};
+
+## Instances of this class let you create a string from IString syntax.
+## Sample usage:
+##   String v = FStr() `variable x = $x`;
+class FStr : StringFormatter {
+    oper init() {}
+
+    void enter() {
+        if (!_writer)
+            rep = _writer = StringWriter();
+    }
+
+    String leave() {
+        result := _writer.createString();
+        _writer = null;
+        rep = null;
+        return result;
+    }
+}
+

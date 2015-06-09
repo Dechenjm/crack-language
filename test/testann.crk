@@ -1,0 +1,145 @@
+# Copyright 2010-2011 Google Inc.
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+import crack.io StringFormatter, cout;
+import crack.compiler CrackContext, Callback, PCB_FUNC_ENTER, PCB_FUNC_LEAVE,
+    STATE_BASE, STATE_OPT_ELSE, FUNCFLAG_STATIC, FUNCFLAG_FINAL, TOK_STRING,
+    Token;
+import crack.cont.treemap TreeMap;
+
+## increment everything but a constant zero.
+void incrButZero(CrackContext ctx) {
+    tok := ctx.getToken();
+    if (tok.hasText('0'.buffer)) {
+        ctx.putBack(tok);
+    } else {
+        ctx.inject(@FILE.buffer, @LINE, '+ 1 '.buffer);
+        ctx.putBack(tok);
+    }
+}
+
+void testIsChecks(CrackContext ctx) {
+    tok := ctx.getToken();
+    if (tok.isIf())
+        ctx.inject(@FILE.buffer, @LINE, '1 '.buffer);
+    else if (tok.isIdent())
+        ctx.inject(@FILE.buffer, @LINE, '2 '.buffer);
+}
+
+void emitOk(CrackContext ctx) {
+    ctx.inject(@FILE.buffer, @LINE, 'cout `ok\n`;'.buffer);
+}
+
+class IntWrapper {
+    int val;
+    oper init(int val) : val = val {}
+}
+
+TreeMap[String, IntWrapper] scopes = {};
+
+void storeScope(CrackContext ctx) {
+    scopes[String(ctx.getToken().getText())] = IntWrapper(ctx.getScope());
+}
+
+void getScope(CrackContext ctx) {
+    v := IntWrapper.cast(scopes[String(ctx.getToken().getText())]).val;
+    StringFormatter fmt = {};
+    fmt `$v \0`;
+    ctx.inject(@FILE.buffer, @LINE, fmt.string().buffer);
+}
+
+void createdAnnotation(CrackContext ctx) {
+    ctx.inject(@FILE.buffer, @LINE, 'true '.buffer);
+}
+
+void createdWithCallback(CrackContext ctx) {
+    StringFormatter fmt = {};
+    arg := IntWrapper.unsafeCast(ctx.getUserData());
+    fmt `$(arg.val) \0`;
+    ctx.inject(@FILE.buffer, @LINE, fmt.string().buffer);
+}
+
+IntWrapper iw;
+
+void createAnnotations(CrackContext ctx) {
+    ctx.storeAnnotation('created'.buffer, createdAnnotation);
+    ctx.storeAnnotation('createdWithCallback'.buffer,
+                        createdWithCallback,
+                        # we have to store our userData in a global variable
+                        # to keeps it from being GCed :-(
+                        iw = IntWrapper(100)
+                        );
+}
+
+void warnTok(CrackContext ctx) {
+    tok := ctx.getToken();
+    ctx.warn(tok, 'warning with token'.buffer);
+}
+
+void warn(CrackContext ctx) {
+    ctx.warn('plain warning'.buffer);
+}
+
+void errorTok(CrackContext ctx) {
+    tok := ctx.getToken();
+    ctx.error(tok, 'error with token'.buffer);
+}
+
+void error(CrackContext ctx) {
+    tok := ctx.getToken();
+    ctx.error('plain error'.buffer);
+}
+
+Callback enterCB, leaveCB;
+
+void enter(CrackContext ctx) {
+    ctx.inject(@FILE.buffer, @LINE, 'result `{`;'.buffer);
+}
+
+void leave(CrackContext ctx) {
+    ctx.inject(@FILE.buffer, @LINE, 'result `}`;'.buffer);
+    ctx.removeCallback(enterCB);
+    ctx.removeCallback(leaveCB);
+}
+
+void wrap(CrackContext ctx) {
+    # verify that we're in a state where a definition can occur.
+
+    if ((parseState := ctx.getParseState()) != STATE_BASE &&
+        parseState != STATE_OPT_ELSE
+        )
+        ctx.error('You cannot place a function annotation here.'.buffer);
+
+    enterCB = ctx.addCallback(PCB_FUNC_ENTER, enter);
+    leaveCB = ctx.addCallback(PCB_FUNC_LEAVE, leave);
+}
+
+void user_static(CrackContext ctx) {
+    ctx.setNextFuncFlags(FUNCFLAG_STATIC);
+}
+
+void user_final(CrackContext ctx) {
+    ctx.setNextFuncFlags(FUNCFLAG_FINAL);
+}
+
+void getLocation(CrackContext ctx) {
+    tok := ctx.getToken();
+    loc := tok.getLocation();
+    StringFormatter fmt = {};
+    fmt `NAME := "$(loc.getName())"; LINE := $(loc.getLineNumber()); \0`;
+    ctx.inject(@FILE.buffer, @LINE, fmt.string().buffer);
+}
+
+void stringify(CrackContext ctx) {
+    tok := ctx.getToken();
+    ctx.putBack(Token(TOK_STRING, tok.getText(), tok.getLocation()));
+}
+
+void nullTok(CrackContext ctx) {
+    Token tok;
+}
+

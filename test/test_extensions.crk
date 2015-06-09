@@ -1,0 +1,123 @@
+# Copyright 2010-2012 Google Inc.
+# Copyright 2011 Shannon Weyrick <weyrick@mozek.us>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+# Extension tests.
+
+import testext echo, copyArray, MyType, INT_CONST, FLOAT_CONST,
+    callback, MyVirtual, Caller;
+import crack.io cout;
+if (String(echo("hello".buffer)) != "hello")
+    cout `failed on function invocation\n`;
+
+t := MyType();
+if (String(t.echo('bite me'.buffer)) != 'bite me') 
+    cout `failed on method invocation\n`;
+
+if (t.a != 100)
+    cout `integer instance variable not set.\n`;
+
+if (String(t.b) != 'test')
+    cout `string instance variable not set.\n`;
+
+MyType u;
+if (!(u is null))
+    cout `null test fails\n`;
+
+class MyAggType : Object, MyType {
+    oper init() {}
+    oper init(int a, byteptr b) : MyType(a, b) {}
+}
+
+agg := MyAggType();
+# TODO: remove the conversion once we can implement all integer operations for 
+# atomics.
+if (agg.refCount != int(1))
+    cout `bad reference count in MyAggType\n`;
+if (agg.a != 0)
+    cout `Instance variable "a" not initialized in MyAggType\n`;
+
+agg = MyAggType(100, null);
+# TODO: remove the conversion once we can implement all integer operations for 
+# atomics.
+if (agg.refCount != int(1))
+    cout `bad reference count in MyAggType(100)\n`;
+if (agg.a != 100)
+    cout `Instance variable "a" not initialized in MyAggType(100)\n`;
+
+if (INT_CONST != 123)
+    cout `Constant $(INT_CONST) != 123\n`;
+
+if (FLOAT_CONST != 1.23)
+    cout `Constant $(FLOAT_CONST) != 1.23\n`;
+
+arr := array[int](10);
+for (int i = 0; i < 10; ++i)
+    arr[uint(i)] = i;
+arr2 := copyArray(10, arr);
+for (int i = 0; i < 10; ++i)
+    if (arr2[uint(i)] != i)
+        cout `Type specialization failed: arr2[$i] != $i\n`;
+
+int myCallBack(int x) {
+    // value of 100 is specified in textext.cc
+    if (x != 100)
+        cout `callback param fail\n`;
+    return 50;
+}
+
+r := callback(myCallBack);
+if (r != 50)
+    cout `callback return fail\n`;
+
+# verify that we call the C++ function without an override
+v := MyVirtual();
+if (v.vfunc(100) != 100)
+    cout `FAILED calling C++ virtual\n`;
+v.oper del();
+
+if (MyVirtual.statFunc() != 369)
+    cout `FAILED calling static function\n`;
+
+class DerivedVirtual : MyVirtual {
+    array[int] flags;
+    oper init(array[int] flags) : flags = flags {}
+    int vfunc(int val) {
+        return val + 1;
+    }
+    
+    oper del() {
+        flags[0] = 666;
+    }
+}
+
+# verify that we call the derived function from the crack side
+array[int] flags = [0];
+v = DerivedVirtual(flags);
+if (v.vfunc(100) != 101)
+    cout `FAILED overridind C++ virtual\n`;
+v.oper del();
+if (flags[0] != 666)
+    cout `FAILED overriding destructor\n`;
+
+flags[0] = 0;
+MyVirtual(flags).oper del();
+if (flags[0] != 999)
+    cout `FAILED calling virtual destructor.`;
+
+if (Caller().callMyTest() != 100)
+    cout I`FAILED constructing a method to call a static member of an \
+           existing class.\n`;
+
+if (Caller().createMyVirtual().vfunc(100) != 100)
+    cout I`FAILED constructing a method to call a static member of an \
+           existing virtual class.\n`;
+
+if (Caller().statFunc() != 369)
+    cout I`FAILED calling static function with constructed body that calls \
+           another static function!\n`;
+
+cout `ok\n`;

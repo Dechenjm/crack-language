@@ -1,0 +1,181 @@
+#!/bin/bash
+# Copyright 2011 Google Inc.
+# Copyright 2011 Shannon Weyrick <weyrick@mozek.us>
+# Copyright 2011 Arno Rehn <arno@arnorehn.de>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+MYDIR=`dirname $0`
+(cd $MYDIR; cd ..; ROOT=`pwd`)
+OUTDIR="$MYDIR/output/"
+echo "output to $OUTDIR"
+
+if [ -z "$ROOT" ]; then
+    ROOT=.
+fi
+
+if [ ! -e "$OUTDIR" ]; then
+    mkdir -p "$OUTDIR"
+fi
+
+CRACKBIN="$MYDIR/../crack"
+if [ -s $CRACKBIN ]
+then
+    echo "crack binary at $CRACKBIN"
+else
+    echo "no crack binary found at $CRACKBIN. run from screen/ directory."
+    exit 1
+fi
+
+function slash_terminate {
+    case "$1" in
+        */) echo "$1" ;;
+        *) echo "$1/" ;;
+    esac
+}
+
+temp_root="$(slash_terminate $ROOT)"
+temp_outdir="$(slash_terminate $OUTDIR)"
+STATIC_VARS="
+    s:%SOURCEDIR%:$temp_root:g
+    s:%BUILDDIR%:${BUILD_ROOT:-$temp_root}:g
+    s:%OUTDIR%:$temp_outdir:g
+"
+VARS="$STATIC_VARS"
+
+function extract_section {
+    local file="$1"
+    local sec="$2"
+    result="$(awk <$file '
+        BEGIN { in_section = 0; }
+        /^%%.*%%$/ && in_section { in_section = 0; }
+        in_section != 0 { print $0; }
+        /^%%'$sec'%%$/ { in_section = 1; }
+        ')"
+    echo "$result" | sed "$VARS"
+}
+
+function load_options {
+    local path="$1"
+    
+    # stop when we get to the top
+    if [ "$path" = "/" -o "$(basename $path)" = "screen" ]; then
+        return
+    fi
+    
+    opt_file="$path/options"
+    if [ -e "$opt_file" ]; then
+        OPTS_sec="$(extract_section "$opt_file" OPTS)"
+        return
+    fi
+    
+    # check parent directory
+    load_options "$(dirname $path)"
+}
+
+function run_test {
+
+    local file="$1"
+    
+    # fill the global vars from the options files
+    load_options $(cd "$(dirname "$file")"; pwd)
+    #echo "infile: $file"
+    newname=`basename $file .crkt`
+    outfile="$OUTDIR$newname.crk"
+    #echo "outfile: $outfile"
+    
+    # add the script name to the substitution vars
+    VARS="$STATIC_VARS; s:%SCRIPTNAME%:$outfile:g"
+    
+    TEST_sec=$(extract_section $file TEST)
+    echo -n "$TEST_sec ..."
+    FILE_sec=$(extract_section $file FILE)
+    echo "$FILE_sec" > $outfile
+    ARGS_sec=$(extract_section $file ARGS)
+    EXPECT_sec=`extract_section $file EXPECT`
+    REXPECT_sec=`extract_section $file REXPECT`
+    STDIN_sec=`extract_section $file STDIN`
+    
+    # XXX script args
+    # XXX stdin
+
+    if $debug; then
+        gdb_opts="gdb.options.$$"
+        echo "set args $OPTS_sec $outfile $ARGS_sec" >$gdb_opts
+        LD_LIBRARY_PATH=.libs gdb -x $gdb_opts .libs/crack
+        rm "$gdb_opts"
+    elif $valgrind; then
+        LD_LIBRARY_PATH=.libs valgrind .libs/crack $OPTS_sec $outfile $ARGS_sec
+    else
+        cmdline="$CRACKBIN $OPTS_sec $outfile $ARGS_sec" # xxx script args section
+        #echo "running $cmdline"
+        result="$(echo $STDIN_sec | $cmdline 2>&1)"
+        if [ -n "$REXPECT_sec" ]; then
+            if echo "$result" | grep "$REXPECT_sec" > /dev/null; then
+                ok=true
+            else
+                ok=false
+                expected=$REXPECT_sec
+            fi
+        elif [ "$result" = "$EXPECT_sec" ]; then
+            ok=true
+        else
+            ok=false
+            expected=$EXPECT_sec
+        fi
+            
+        if $ok; then
+            echo ok
+        else
+            echo ""
+            echo "FAILED $file"
+            echo "$cmdline"
+            echo "Expected: $expected"
+            echo "Got     : $result"
+            diff <(echo "$EXPECT_sec") <(echo "$result")
+            errors=$((errors + 1))
+        fi
+    fi
+}
+
+debug=false
+if [ "$1" = '-g' ]; then
+    debug=true
+    shift
+fi
+
+valgrind=false
+if [ "$1" = "-V" ]; then
+    valgrind=true
+    shift
+fi
+
+errors=0
+if [ -z "$*" ]; then
+    # pre bootstrap tests
+    BASIC=`find $MYDIR/tests/basic -name "*.crkt" | sort`
+    
+    for file in $BASIC
+    do
+        run_test $file
+    done
+else
+    # deal with user-specified tests
+    for test in "$@"; do
+        run_test "$test"
+    done
+fi
+
+if [ "$errors" != 0 ]; then
+    echo "====================="
+    echo "Test Failures: $errors"
+    echo "====================="
+    exit 1
+else
+    echo "=============="
+    echo "All Tests Pass"
+    echo "=============="
+fi

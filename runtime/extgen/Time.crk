@@ -1,0 +1,162 @@
+# Crack binding of time.h
+# Copyright 2011 Google Inc.
+# Copyright 2011-2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+# 
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# 
+
+@import crack.extgen generateExtension;
+
+@generateExtension crack.runtime.time {
+   @filename 'runtime/Time.cc'
+   @dumpsymbols 'runtime/extgen/Time.txt'
+   @inject '#include <stdlib.h>\n'
+   @inject '#include <unistd.h>\n'
+   @inject '#include <time.h>\n'
+   @inject '#include <sys/types.h>\n'
+   @inject '#include <sys/time.h>\n'
+   @inject '#include <stdio.h>\n'
+
+   @inject '
+#ifdef __APPLE__
+#include "crt_externs.h" // _NSGetEnviron
+#else
+extern char **environ;
+#endif
+
+typedef struct tm InternalDate;
+
+InternalDate *crk_create_date(){
+   return (InternalDate *)calloc(1, sizeof(InternalDate));
+}
+
+int64_t crk_getSeconds(InternalDate *d) {
+   // have to wrap this to correctly convert from time_t to int64.
+   return mktime(d);
+}
+
+InternalDate *crk_localtime(InternalDate *d, int64_t t){
+   const time_t lt = (const time_t)t;
+   return localtime_r(&lt, d);
+}
+
+'
+
+   @inject '
+InternalDate *crk_localtime_now(InternalDate *now){
+   struct timeval tv;
+   gettimeofday(&tv, NULL);
+   return localtime_r(&(tv.tv_sec), now);
+}
+'
+
+   @inject '
+InternalDate *crk_gmtime(InternalDate *d, int64_t t){
+   const time_t gt = (const time_t)t;
+   return gmtime_r(&gt, d);
+}
+'
+
+   @inject '
+InternalDate *crk_gmtime_now(InternalDate *now){
+   struct timeval tv;
+   gettimeofday(&tv, NULL);
+   return gmtime_r(&(tv.tv_sec), now);
+}
+'
+
+
+   @inject '
+void crk_epoch(InternalDate *epoch){
+   epoch->tm_year = 70;
+   epoch->tm_mon = 0;
+   epoch->tm_mday = 1;
+   epoch->tm_hour = 0;
+   epoch->tm_min = 0;
+   epoch->tm_sec = 0;
+}
+'
+
+   @inject '
+char *crk_ctime_r(int64_t t, char * buf){
+   const time_t lt = (const time_t)t;
+   return ctime_r(&lt, buf);
+}
+'
+
+   @inject '
+char **get_environ(){
+#ifdef __APPLE__
+    char ***envp_ = _NSGetEnviron();
+    char **envp = *envp_;
+#else
+    char **envp = ::environ;
+#endif
+   return envp;
+}
+'
+
+   @crack_internal
+   class InternalDate {
+      int tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday, 
+          tm_isdst;
+      int64 tm_gmtoff;
+      byteptr tm_zone;
+
+      @cname crk_create_date
+      oper init();
+
+      @cname crk_getSeconds
+      int64 getSeconds();
+
+      @cname crk_localtime
+      void setLocalSeconds(int64 t);
+
+      @cname crk_localtime_now
+      void setLocalNow();
+
+      @cname crk_gmtime
+      void setUTCSeconds(int64 t);
+
+      @cname crk_gmtime_now
+      void setUTCNow();
+
+      @cname crk_epoch
+      void setEpoch();
+   }
+
+   @cname mktime
+   int64 mktime(InternalDate d);
+
+   @cname crk_localtime
+   InternalDate localtime(InternalDate d, int64 t);
+
+   @cname crk_localtime_now
+   InternalDate localtime_now(InternalDate now);
+
+   @cname crk_gmtime_now
+   InternalDate gmtime_now(InternalDate now);
+
+   @cname crk_gmtime
+   InternalDate gmtime(InternalDate now, int64 t);
+
+   @cname crk_epoch
+   void epoch(InternalDate epoch);
+
+   @cname asctime_r
+   byteptr asctime(InternalDate d, byteptr buf);
+
+   @cname crk_ctime_r
+   byteptr ctime(int64 seconds, byteptr buf);
+
+   uintz strftime(byteptr s, uintz max, byteptr format, InternalDate d);
+   byteptr strptime(byteptr s, byteptr format, InternalDate d);
+
+   array[byteptr] get_environ();
+   int putenv(byteptr keyvalue);
+   byteptr getenv(byteptr name);
+   int setenv(byteptr name, byteptr value, int overwrite);
+   int unsetenv(byteptr name);
+}

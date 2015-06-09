@@ -1,0 +1,14 @@
+%%TEST%%
+bootstrapped overloads
+%%ARGS%%
+
+%%FILE%%
+print()
+%%EXPECT%%
+ParseError: %OUTDIR%036_x.crk:1:7: No method exists matching print()
+Possible overloads for print:
+  void crack.lang.print(crack.lang.String val)
+  void crack.lang.print(crack.lang.StaticString val)
+  void crack.lang.print(crack.lang.CString val)
+%%STDIN%%
+

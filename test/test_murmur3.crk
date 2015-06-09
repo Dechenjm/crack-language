@@ -1,0 +1,45 @@
+// Test Murmur3_32 class
+// Copyright 2012 Conrad Steenberg <conrad.steenberg@gmail.com>
+// 
+//   This Source Code Form is subject to the terms of the Mozilla Public
+//   License, v. 2.0. If a copy of the MPL was not distributed with this
+//   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// 
+// 6/25/2012
+
+import crack.ascii hex, radix;
+import crack.hash.murmur3 Murmur3_32;
+import crack.random uuid;
+import crack.io cout;
+import crack.cont.array Array;
+
+h := Murmur3_32();
+h.update("hello");
+h1 := Murmur3_32();
+h1.update("hello1");
+h2 := Murmur3_32();
+h2.update("hello12");
+h3 := Murmur3_32();
+h3.update("hello123");
+h4 := Murmur3_32("hello123");
+
+Array[uint32] int32Vals = [h.asUInt32(), h1.asUInt32(), h2.asUInt32(),
+                           h3.asUInt32(), h4.asUInt32()];
+Array[uint32] int32Expected = [613153351, 1897764613, 35436738, 2340879560,
+                               2340879560];
+
+bool success = true;
+for (uint32 i=0; i < int32Vals.count(); i++) {
+    if (int32Vals[i] != int32Expected[i])
+        success = false;
+}
+
+if (hex(h.digest()) != "47fa8b24" || !success)
+    cout.write("FAILED getting digest value\n");
+
+
+myUUID := uuid(12);
+if (myUUID.size != 12 || hex(myUUID) == "000000000000000000000000")
+    cout `Failed to generate meaningful UUID\n`;
+else
+    cout `ok\n`;
